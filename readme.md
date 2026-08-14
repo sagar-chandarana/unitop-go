@@ -54,22 +54,23 @@ Static, no runtime dependencies — drop it on any Linux host:
 
 ```sh
 REL=https://github.com/sagar-chandarana/unitop-go/releases/latest/download
-curl -fsSL -o unitop "$REL/unitop-linux-amd64"   # or unitop-linux-arm64
-chmod +x unitop
-./unitop
+BIN=unitop-linux-amd64     # or unitop-linux-arm64
+curl -fsSL -O "$REL/$BIN"
+chmod +x "$BIN" && ./"$BIN"
+```
+
+Verify it first if you like — keep the downloaded name, since that is what the
+checksums refer to:
+
+```sh
+curl -fsSL -O "$REL/SHA256SUMS"
+sha256sum -c SHA256SUMS --ignore-missing
 ```
 
 Put it on your `PATH`:
 
 ```sh
-sudo install -m755 unitop /usr/local/bin/unitop
-```
-
-Verify what you downloaded:
-
-```sh
-curl -fsSL -O "$REL/SHA256SUMS"
-sha256sum -c SHA256SUMS --ignore-missing
+sudo install -m755 "$BIN" /usr/local/bin/unitop
 ```
 
 Install it onto a remote host and run it there, in one go:
