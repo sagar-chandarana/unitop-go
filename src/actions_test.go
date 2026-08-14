@@ -133,6 +133,27 @@ func TestMenuStaysOnScreen(t *testing.T) {
 	}
 }
 
+// Template and device-mapped units have very long names; the popup must stay a
+// popup rather than stretching across the screen.
+func TestMenuWidthIsCapped(t *testing.T) {
+	long := "systemd-fsck@dev-disk-by-partlabel-disk-_dev_nvme0n1-esp.service"
+	if w := menuWidth(long); w > menuMaxWidth {
+		t.Errorf("menuWidth(long) = %d, want <= %d", w, menuMaxWidth)
+	}
+	// A short name still gets a box wide enough for the longest action label.
+	if w := menuWidth("a.service"); w < len("reload-or-restart")+4 {
+		t.Errorf("menuWidth(short) = %d, too narrow for the action labels", w)
+	}
+
+	m := actionModel(t)
+	m.openMenu(long, 0, 0)
+	for i, line := range m.menuBox() {
+		if got := lipglossWidth(line); got != menuWidth(long) {
+			t.Errorf("menu line %d is %d wide, want %d", i, got, menuWidth(long))
+		}
+	}
+}
+
 func TestMenuItemAt(t *testing.T) {
 	m := actionModel(t)
 	m.openMenu("nginx.service", 10, 4)

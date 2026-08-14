@@ -161,6 +161,11 @@ func (m *model) openMenu(unit string, x, y int) {
 	m.menu = ctxMenu{open: true, unit: unit, x: x, y: y}
 }
 
+// menuMaxWidth keeps the popup a popup. Template and device-mapped units have
+// names like systemd-fsck@dev-disk-by-partlabel-… which would otherwise stretch
+// the box across the whole screen; menuBox truncates the title to fit.
+const menuMaxWidth = 40
+
 func menuWidth(unit string) int {
 	w := len([]rune(shortUnit(unit))) + 4
 	for _, a := range unitActions {
@@ -168,5 +173,5 @@ func menuWidth(unit string) int {
 			w = n
 		}
 	}
-	return w
+	return min(w, menuMaxWidth)
 }

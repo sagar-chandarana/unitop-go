@@ -920,7 +920,12 @@ func (m model) viewFooter() string {
 		// l does nothing here, so it is not offered.
 		keys = slices.DeleteFunc(keys, func(k [2]string) bool { return k[0] == "l" })
 	}
-	var parts []string
+	// Fit whole hints, dropping the ones that do not fit. Cutting the line at
+	// the width instead would leave a half-written key, which reads as a
+	// rendering fault rather than a narrow terminal.
+	sep := stFaint.Render(" · ")
+	var line string
+	used := 0
 	for _, k := range keys {
 		d := k[1]
 		st := stFaint
@@ -928,9 +933,21 @@ func (m model) viewFooter() string {
 			st = stWarn
 			d = "follow off"
 		}
-		parts = append(parts, stKey.Render(k[0])+st.Render(" "+d))
+		hint := stKey.Render(k[0]) + st.Render(" "+d)
+		w := lipgloss.Width(hint)
+		if line != "" {
+			w += 3 // the separator
+		}
+		if used+w > m.width {
+			break
+		}
+		if line != "" {
+			line += sep
+		}
+		line += hint
+		used += w
 	}
-	return truncANSI(strings.Join(parts, stFaint.Render(" · ")), m.width)
+	return line
 }
 
 func (m model) viewHelp() []string {

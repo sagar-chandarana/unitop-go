@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -461,6 +462,67 @@ func TestEnterOnSliceDoesNotOpenFullView(t *testing.T) {
 	if !m.collapsed["-.slice"] {
 		t.Error("enter on a slice did not collapse it")
 	}
+}
+
+var allFooterHints = []string{
+	"↑↓ move", "enter full view", "enter/esc back", "x actions", "tab focus",
+	"s sort", "r rev", "t tree", "/ filter", "a all", "f follow", "f follow off",
+	"l log", "? help", "q quit",
+}
+
+// The footer drops whole hints when the terminal is narrow; a hint cut in half
+// looks like a rendering fault.
+func TestFooterDropsWholeHints(t *testing.T) {
+	for _, w := range []int{40, 60, 80, 100, 140, 200} {
+		m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
+		m.width, m.height, m.ready = w, 30, true
+		m.connected = true
+		m.units = testUnits()
+		m.rebuild()
+
+		foot := m.viewFooter()
+		if got := lipglossWidth(foot); got > w {
+			t.Errorf("width %d: footer is %d wide", w, got)
+		}
+		// Whatever survived must be complete hints, not a truncated tail.
+		plain := stripANSI(foot)
+		if strings.HasSuffix(plain, " ") || strings.HasSuffix(plain, "·") {
+			t.Errorf("width %d: footer ends mid-separator: %q", w, plain)
+		}
+		// Every hint present must be one of the complete ones.
+		for _, hint := range strings.Split(plain, " · ") {
+			if hint == "" {
+				continue
+			}
+			if !slices.Contains(allFooterHints, hint) {
+				t.Errorf("width %d: %q is not a complete hint (footer %q)", w, hint, plain)
+			}
+		}
+		if w >= 140 && !strings.Contains(plain, "q quit") {
+			t.Errorf("width %d: a wide footer should still offer quit: %q", w, plain)
+		}
+		if w == 40 && strings.Contains(plain, "q quit") {
+			t.Errorf("width 40: footer should have dropped later hints: %q", plain)
+		}
+	}
+}
+
+func stripANSI(s string) string {
+	var b strings.Builder
+	inEsc := false
+	for _, r := range s {
+		if r == '\x1b' {
+			inEsc = true
+		}
+		if inEsc {
+			if r == 'm' {
+				inEsc = false
+			}
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func TestRowAtMatchesRenderedRows(t *testing.T) {

@@ -193,6 +193,24 @@ useful. See `.claude/memory/feedback_verify_tui_with_pty.md` for the recipe and
 its pitfalls (bubbletea only repaints changed lines, so a captured stream is
 overlapping partial frames, not whole screens).
 
+## Releasing
+
+Tagging publishes static `linux/amd64` and `linux/arm64` binaries plus
+`SHA256SUMS` to a GitHub release, via `.github/workflows/release.yml`:
+
+```sh
+git tag -a v0.2.0 -m 'v0.2.0' && git push origin v0.2.0
+```
+
+Bump `version` in `flake.nix` to match; the workflow injects the tag into
+`main.version` with `-ldflags -X`, so a release binary reports the tag and a
+`nix build` reports the flake's value. The README's download URLs point at
+`releases/latest/download/`, so they keep working without edits.
+
+The screenshots in `docs/` are regenerated with tmux + `charm-freeze` — recipe
+and pitfalls in `.claude/memory/feedback_verify_tui_with_pty.md`. They contain
+sanitised hostnames and unit names; keep it that way.
+
 ## Gotchas
 
 - New files must be `git add`ed before `nix build`/`nix run` — flakes only see
