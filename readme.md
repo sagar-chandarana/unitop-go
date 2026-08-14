@@ -8,7 +8,7 @@ live journal tail beside it, a slice tree, and start/stop/kill from a menu.
 [![release](https://img.shields.io/github/v/release/sagar-chandarana/unitop-go?sort=semver)](https://github.com/sagar-chandarana/unitop-go/releases/latest)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-![unitop](docs/table.png)
+![unitop](docs/main.png)
 
 > **Pre-1.0.** It does what it says and is used daily, but flags, keys and
 > output are still open to change. Pin a tag if that matters to you.
@@ -153,6 +153,13 @@ The mouse works too: the wheel scrolls whichever pane it is over, a click on a
 **column header** sorts by it (again to reverse), a click on a slice's `▾`
 toggles it, and a **right click on a unit** opens the action menu.
 
+## Full view
+
+`enter` on a unit drops the table and gives that unit's log the whole width,
+with its live counters kept above. `esc`, or `enter` again, goes back.
+
+![full view](docs/full.png)
+
 ## Tree view
 
 `t` groups units by slice, following the nesting implied by slice names
@@ -175,17 +182,6 @@ Actions run `systemctl` directly, so they need privilege: run as root, or pass
 used — it would take over the terminal — so an unprivileged run reports
 `Interactive authentication required` and suggests `-sudo`. `-read-only`
 removes the menu entirely.
-
-## Connecting
-
-Nothing is drawn until the first poll succeeds. If it fails you get the error,
-what to try about it, and the attempt count; it keeps retrying, and `R` retries
-now.
-
-![failed connection](docs/fail.png)
-
-Once connected, a later failed poll is reported in the status line instead of
-taking over — the last good data stays on screen.
 
 ## What the columns mean
 
