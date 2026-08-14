@@ -486,29 +486,33 @@ func (m *model) collapseOrParent() tea.Cmd {
 	return nil
 }
 
+// scrollLog moves the log view and keeps follow in step with it: resting at the
+// live end *is* following, and anywhere else is not. Without this, scrolling
+// back down to the bottom left follow off and the log sat still.
+func (m *model) scrollLog(delta int) {
+	m.logScroll += delta
+	m.clampLogScroll()
+	m.logFollow = m.logScroll == 0
+}
+
+const scrollToEnd = 1 << 30 // clamped to the real limit by clampLogScroll
+
 func (m *model) logKey(k string) tea.Cmd {
 	page := max(1, m.logHeight()-1)
 	switch k {
 	case "up", "k":
-		m.logScroll++
+		m.scrollLog(1)
 	case "down", "j":
-		m.logScroll--
+		m.scrollLog(-1)
 	case "pgup", "ctrl+b":
-		m.logScroll += page
+		m.scrollLog(page)
 	case "pgdown", "ctrl+f":
-		m.logScroll -= page
+		m.scrollLog(-page)
 	case "end", "G":
-		m.logScroll = 0
-		m.logFollow = true
+		m.scrollLog(-scrollToEnd)
 	case "home", "g":
-		m.logScroll = 1 << 30
-	default:
-		return nil
+		m.scrollLog(scrollToEnd)
 	}
-	if m.logScroll > 0 {
-		m.logFollow = false
-	}
-	m.clampLogScroll()
 	return nil
 }
 
@@ -534,20 +538,14 @@ func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	switch msg.Button {
 	case tea.MouseButtonWheelUp:
 		if overLogs {
-			m.logScroll += 3
-			m.logFollow = false
-			m.clampLogScroll()
+			m.scrollLog(3)
 			return m, nil
 		}
 		m.cursor -= 3
 		return m, m.afterCursorMove()
 	case tea.MouseButtonWheelDown:
 		if overLogs {
-			m.logScroll -= 3
-			if m.logScroll <= 0 {
-				m.logScroll = 0
-				m.logFollow = true
-			}
+			m.scrollLog(-3)
 			return m, nil
 		}
 		m.cursor += 3

@@ -614,3 +614,69 @@ func keyOf(s string) tea.KeyMsg {
 	}
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 }
+
+// Scrolling back down to the newest line means "follow again" — by keyboard as
+// well as by wheel. Leaving follow off there froze the log at the bottom.
+func TestScrollingToTheBottomResumesFollowing(t *testing.T) {
+	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
+	m.width, m.height, m.ready = 120, 24, true
+	m.connected = true
+	m.units = testUnits()
+	m.rebuild()
+	m.focus = focusLogs
+	for i := 0; i < 200; i++ {
+		m.logs = append(m.logs, logLine{ts: time.Now(), prio: 6, msg: "line"})
+	}
+
+	if !m.logFollow {
+		t.Fatal("should start out following")
+	}
+	m.logKey("up")
+	if m.logFollow || m.logScroll == 0 {
+		t.Fatalf("scrolling up should stop following: follow=%v scroll=%d", m.logFollow, m.logScroll)
+	}
+	m.logKey("pgup")
+	if m.logFollow {
+		t.Error("paging up should stop following")
+	}
+
+	// Walk back down one line at a time; arriving at the end resumes follow.
+	for i := 0; i < 500 && m.logScroll > 0; i++ {
+		m.logKey("down")
+	}
+	if m.logScroll != 0 {
+		t.Fatalf("never reached the bottom: scroll=%d", m.logScroll)
+	}
+	if !m.logFollow {
+		t.Error("reaching the bottom with 'down' did not resume following")
+	}
+
+	// The wheel behaves identically.
+	m.logKey("pgup")
+	if m.logFollow {
+		t.Fatal("paging up should stop following")
+	}
+	for i := 0; i < 500 && m.logScroll > 0; i++ {
+		m.handleMouse(tea.MouseMsg{Button: tea.MouseButtonWheelDown, X: m.tableWidth() + 1})
+	}
+	if !m.logFollow {
+		t.Error("wheeling to the bottom did not resume following")
+	}
+
+	// G jumps to the end and follows; g goes to the top and does not.
+	m.logKey("home")
+	if m.logFollow || m.logScroll == 0 {
+		t.Errorf("g should go to the top and stop following: follow=%v scroll=%d", m.logFollow, m.logScroll)
+	}
+	m.logKey("end")
+	if !m.logFollow || m.logScroll != 0 {
+		t.Errorf("G should return to the live end: follow=%v scroll=%d", m.logFollow, m.logScroll)
+	}
+
+	// A log shorter than the pane has nowhere to scroll, so follow stays on.
+	m.logs = m.logs[:2]
+	m.logKey("up")
+	if !m.logFollow {
+		t.Error("a log that fits on screen should keep following")
+	}
+}

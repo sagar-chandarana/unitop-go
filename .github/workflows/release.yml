@@ -46,15 +46,41 @@ jobs:
           file unitop-linux-amd64
           cat SHA256SUMS
 
+      # Release notes come from CHANGELOG.md: the section for this version,
+      # up to the next heading. Falls back to generated notes if the version
+      # has no entry, so a release is never blocked on the changelog.
+      - name: Extract release notes
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -eu
+          version="${TAG#v}"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if [ -s notes.md ]; then
+            echo "have_notes=1" >> "$GITHUB_ENV"
+            cat notes.md
+          else
+            echo "no CHANGELOG entry for $version; using generated notes"
+          fi
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -eu
+          if [ "${have_notes:-}" = "1" ]; then
+            notes_arg="--notes-file=notes.md"
+          else
+            notes_arg="--generate-notes"
+          fi
           gh release create "$TAG" \
             --title "$TAG" \
-            --generate-notes \
+            "$notes_arg" \
             dist/unitop-linux-amd64 \
             dist/unitop-linux-arm64 \
             dist/SHA256SUMS

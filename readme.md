@@ -11,7 +11,8 @@ live journal tail beside it, a slice tree, and start/stop/kill from a menu.
 ![unitop](docs/main.png)
 
 > **Pre-1.0.** It does what it says and is used daily, but flags, keys and
-> output are still open to change. Pin a tag if that matters to you.
+> output are still open to change. Pin a tag if that matters to you, and see
+> the [changelog](CHANGELOG.md) for what moved.
 
 Works on the local machine, or on any host you can reach over ssh:
 

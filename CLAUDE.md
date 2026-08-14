@@ -206,12 +206,22 @@ Tagging publishes static `linux/amd64` and `linux/arm64` binaries plus
 `SHA256SUMS` to a GitHub release, via `.github/workflows/release.yml`:
 
 ```sh
+# 1. move the Unreleased entries under a new "## [x.y.z] — <date>" heading in
+#    CHANGELOG.md, and add its compare link at the bottom
+# 2. bump `version` in flake.nix and src/main.go to match
+# 3. commit, then:
+git push origin master
 git tag -a v0.2.0 -m 'v0.2.0' && git push origin v0.2.0
 ```
 
-Bump `version` in `flake.nix` to match; the workflow injects the tag into
-`main.version` with `-ldflags -X`, so a release binary reports the tag and a
-`nix build` reports the flake's value. The README's download URLs point at
+**Release notes are the matching `CHANGELOG.md` section**, extracted by the
+workflow. A version with no entry falls back to generated notes rather than
+blocking the release — but write the entry. Record what changed for someone
+using the tool, not the commit subjects.
+
+The workflow injects the tag into `main.version` with `-ldflags -X`, so a
+release binary reports the tag and a `nix build` reports the flake's value —
+keep the two in step. The README's download URLs point at
 `releases/latest/download/`, so they keep working without edits.
 
 The screenshots in `docs/` are regenerated with tmux + `charm-freeze` — recipe
