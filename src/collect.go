@@ -1,0 +1,404 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// runner executes systemctl/journalctl either locally or on a remote host
+// over ssh. Everything else in the program goes through it, so -H works for
+// the log stream exactly as it does for the metric poll.
+type runner struct {
+	host string
+	// ctlPath multiplexes every ssh invocation over one connection. Without
+	// it each poll pays a full TCP + handshake per command, which on a distant
+	// host costs more than the poll interval.
+	ctlPath string
+}
+
+func newRunner(host string) runner {
+	r := runner{host: host}
+	if host != "" {
+		r.ctlPath = filepath.Join(os.TempDir(), fmt.Sprintf(".unitop-%d.sock", os.Getpid()))
+	}
+	return r
+}
+
+func (r runner) sshOpts() []string {
+	opts := []string{
+		"-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=10",
+		"-o", "ServerAliveInterval=15",
+	}
+	if r.ctlPath != "" {
+		opts = append(opts,
+			"-o", "ControlMaster=auto",
+			"-o", "ControlPath="+r.ctlPath,
+			"-o", "ControlPersist=30s")
+	}
+	return opts
+}
+
+func (r runner) command(ctx context.Context, name string, args ...string) *exec.Cmd {
+	if r.host == "" {
+		return exec.CommandContext(ctx, name, args...)
+	}
+	remote := make([]string, 0, len(args)+1)
+	remote = append(remote, shellQuote(name))
+	for _, a := range args {
+		remote = append(remote, shellQuote(a))
+	}
+	sshArgs := append(r.sshOpts(), r.host, "--", strings.Join(remote, " "))
+	return exec.CommandContext(ctx, "ssh", sshArgs...)
+}
+
+// close tears down the multiplexed connection instead of leaving it to
+// ControlPersist.
+func (r runner) close() {
+	if r.ctlPath == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = exec.CommandContext(ctx, "ssh", "-o", "ControlPath="+r.ctlPath, "-O", "exit", r.host).Run()
+}
+
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	safe := true
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
+			strings.ContainsRune("@%_-+=:,./", c)) {
+			safe = false
+			break
+		}
+	}
+	if safe {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// Unit is one service plus the rates derived from the previous poll.
+type Unit struct {
+	Name        string
+	Desc        string
+	Slice       string
+	Load        string
+	Active      string
+	Sub         string
+	Result      string
+	Type        string
+	Fragment    string
+	NRestarts   uint64
+	MainPID     uint64
+	ExecStatus  uint64 // ExecMainStatus: exit code, or signal number when killed
+	ExecCode    uint64 // ExecMainCode: the wait(2) si_code, 0 until a main process exits
+	CondResult  string // ConditionResult: "no" when the unit was skipped
+	Tasks       uint64
+	MemCurrent  uint64
+	MemPeak     uint64
+	CPUNSec     uint64
+	IPIn        uint64
+	IPOut       uint64
+	IORead      uint64
+	IOWrite     uint64
+	IPAccount   bool
+	ActiveSince time.Time
+	StateChange time.Time
+
+	// Derived from the delta against the previous sample.
+	CPUPct     float64
+	NetInRate  float64
+	NetOutRate float64
+	IORRate    float64
+	IOWRate    float64
+	HasRates   bool
+}
+
+func (u Unit) Failed() bool { return u.Active == "failed" }
+
+func (u Unit) NetRate() float64 {
+	if !u.IPAccount {
+		return -1
+	}
+	return u.NetInRate + u.NetOutRate
+}
+
+func (u Unit) IORate() float64 { return u.IORRate + u.IOWRate }
+
+var showProperties = strings.Join([]string{
+	"Id", "Description", "Slice", "LoadState", "ActiveState", "SubState", "Result",
+	"Type", "FragmentPath", "NRestarts", "MainPID",
+	"ExecMainStatus", "ExecMainCode", "ConditionResult",
+	"TasksCurrent", "MemoryCurrent", "MemoryPeak", "CPUUsageNSec",
+	"IPAccounting", "IPIngressBytes", "IPEgressBytes",
+	"IOReadBytes", "IOWriteBytes",
+	"ActiveEnterTimestamp", "StateChangeTimestamp",
+}, ",")
+
+type sample struct {
+	cpu, ipIn, ipOut, ioR, ioW uint64
+	when                       time.Time
+}
+
+// Collector polls systemd and turns monotonic counters into rates.
+type Collector struct {
+	r        runner
+	prev     map[string]sample
+	prevHost *hostSample
+}
+
+func NewCollector(r runner) *Collector {
+	return &Collector{r: r, prev: map[string]sample{}}
+}
+
+// Poll returns every loaded service unit plus the machine-wide summary. Units
+// systemd knows about only as a dangling reference (LoadState=not-found) are
+// dropped: they are noise, not services.
+func (c *Collector) Poll(ctx context.Context) ([]Unit, HostStats, error) {
+	proc, names, err := c.pollBase(ctx)
+	host := c.deriveHost(proc, time.Now())
+	if err != nil {
+		return nil, host, err
+	}
+	if len(names) == 0 {
+		return nil, host, nil
+	}
+
+	now := time.Now()
+	var units []Unit
+	// One batch covers any realistic host; the split only guards against a
+	// command line long enough to bother execve.
+	const batch = 400
+	for i := 0; i < len(names); i += batch {
+		end := min(i+batch, len(names))
+		args := append([]string{"show", "--timestamp=unix", "--property=" + showProperties}, names[i:end]...)
+		out, err := c.r.command(ctx, "systemctl", args...).Output()
+		if err != nil {
+			return nil, host, fmt.Errorf("systemctl show: %w", wrapExec(err))
+		}
+		units = append(units, parseShow(string(out))...)
+	}
+
+	seen := make(map[string]sample, len(units))
+	for i := range units {
+		u := &units[i]
+		cur := sample{cpu: u.CPUNSec, ipIn: u.IPIn, ipOut: u.IPOut, ioR: u.IORead, ioW: u.IOWrite, when: now}
+		seen[u.Name] = cur
+		p, ok := c.prev[u.Name]
+		if !ok {
+			continue
+		}
+		dt := now.Sub(p.when).Seconds()
+		if dt <= 0 {
+			continue
+		}
+		u.HasRates = true
+		if u.CPUNSec != unsetU64 && p.cpu != unsetU64 && u.CPUNSec >= p.cpu {
+			u.CPUPct = float64(u.CPUNSec-p.cpu) / 1e9 / dt * 100
+		}
+		u.NetInRate = rate(u.IPIn, p.ipIn, dt)
+		u.NetOutRate = rate(u.IPOut, p.ipOut, dt)
+		u.IORRate = rate(u.IORead, p.ioR, dt)
+		u.IOWRate = rate(u.IOWrite, p.ioW, dt)
+	}
+	c.prev = seen
+	return units, host, nil
+}
+
+// rate is a counter delta per second, yielding 0 across a restart (when the
+// kernel/systemd counter resets to a lower value) rather than a huge spike.
+func rate(cur, prev uint64, dt float64) float64 {
+	if cur == unsetU64 || prev == unsetU64 || cur < prev {
+		return 0
+	}
+	return float64(cur-prev) / dt
+}
+
+var listUnitsArgs = []string{
+	"list-units", "--type=service", "--all", "--plain", "--no-legend", "--no-pager",
+}
+
+// procMarker separates the /proc dump from the unit list when both are fetched
+// in one remote shell. It must not start with '#', which would make the rest
+// of the one-line script a comment, and it must not appear in /proc output.
+const procMarker = "@@unitop-units@@"
+
+// pollBase fetches the /proc files and the unit list. Locally that is a few
+// file reads plus one exec; remotely it is a single ssh round trip, which
+// matters because the poll interval is short and a distant host is not.
+func (c *Collector) pollBase(ctx context.Context) (map[string]string, []string, error) {
+	if c.r.host == "" {
+		proc := readProcLocal()
+		out, err := c.r.command(ctx, "systemctl", listUnitsArgs...).Output()
+		if err != nil {
+			return proc, nil, fmt.Errorf("systemctl list-units: %w", wrapExec(err))
+		}
+		return proc, parseUnitList(string(out)), nil
+	}
+
+	script := "grep -H '' " + strings.Join(procFiles, " ") + " 2>/dev/null; " +
+		"echo '" + procMarker + "'; systemctl " + strings.Join(listUnitsArgs, " ")
+	out, err := c.r.command(ctx, "sh", "-c", script).Output()
+	if err != nil {
+		return nil, nil, fmt.Errorf("remote poll: %w", wrapExec(err))
+	}
+	head, tail, _ := strings.Cut(string(out), procMarker+"\n")
+	return parseProcDump(head), parseUnitList(tail), nil
+}
+
+func parseUnitList(out string) []string {
+	var names []string
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 || !strings.HasSuffix(f[0], ".service") {
+			continue
+		}
+		if f[1] == "not-found" {
+			continue
+		}
+		names = append(names, f[0])
+	}
+	return names
+}
+
+func parseShow(out string) []Unit {
+	var units []Unit
+	for _, block := range strings.Split(out, "\n\n") {
+		u := Unit{
+			NRestarts:  unsetU64,
+			ExecStatus: unsetU64,
+			ExecCode:   unsetU64,
+			Tasks:      unsetU64,
+			MemCurrent: unsetU64,
+			MemPeak:    unsetU64,
+			CPUNSec:    unsetU64,
+			IPIn:       unsetU64,
+			IPOut:      unsetU64,
+			IORead:     unsetU64,
+			IOWrite:    unsetU64,
+		}
+		for _, line := range strings.Split(block, "\n") {
+			k, v, ok := strings.Cut(line, "=")
+			if !ok {
+				continue
+			}
+			switch k {
+			case "Id":
+				u.Name = v
+			case "Description":
+				u.Desc = v
+			case "Slice":
+				u.Slice = v
+			case "LoadState":
+				u.Load = v
+			case "ActiveState":
+				u.Active = v
+			case "SubState":
+				u.Sub = v
+			case "Result":
+				u.Result = v
+			case "Type":
+				u.Type = v
+			case "FragmentPath":
+				u.Fragment = v
+			case "ExecMainStatus":
+				u.ExecStatus = parseU64(v)
+			case "ExecMainCode":
+				u.ExecCode = parseU64(v)
+			case "ConditionResult":
+				u.CondResult = v
+			case "NRestarts":
+				u.NRestarts = parseU64(v)
+			case "MainPID":
+				u.MainPID = parseU64(v)
+			case "TasksCurrent":
+				u.Tasks = parseU64(v)
+			case "MemoryCurrent":
+				u.MemCurrent = parseU64(v)
+			case "MemoryPeak":
+				u.MemPeak = parseU64(v)
+			case "CPUUsageNSec":
+				u.CPUNSec = parseU64(v)
+			case "IPAccounting":
+				u.IPAccount = v == "yes"
+			case "IPIngressBytes":
+				u.IPIn = parseU64(v)
+			case "IPEgressBytes":
+				u.IPOut = parseU64(v)
+			case "IOReadBytes":
+				u.IORead = parseU64(v)
+			case "IOWriteBytes":
+				u.IOWrite = parseU64(v)
+			case "ActiveEnterTimestamp":
+				u.ActiveSince = parseUnixTS(v)
+			case "StateChangeTimestamp":
+				u.StateChange = parseUnixTS(v)
+			}
+		}
+		if u.Name == "" {
+			continue
+		}
+		if u.IPIn == unsetU64 && u.IPOut == unsetU64 {
+			u.IPAccount = false
+		}
+		if u.Slice == "" {
+			u.Slice = "system.slice"
+		}
+		units = append(units, u)
+	}
+	return units
+}
+
+// parseU64 treats systemd's "[not set]" and the u64 sentinel alike.
+func parseU64(v string) uint64 {
+	if v == "" || v == "[not set]" {
+		return unsetU64
+	}
+	n, err := strconv.ParseUint(v, 10, 64)
+	if err != nil {
+		return unsetU64
+	}
+	return n
+}
+
+// parseUnixTS reads the "@1785434347" form produced by --timestamp=unix.
+func parseUnixTS(v string) time.Time {
+	v = strings.TrimPrefix(v, "@")
+	if v == "" || v == "0" {
+		return time.Time{}
+	}
+	// Newer systemd appends a fractional part on some fields.
+	if i := strings.IndexAny(v, ". "); i >= 0 {
+		v = v[:i]
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n == 0 {
+		return time.Time{}
+	}
+	return time.Unix(n, 0)
+}
+
+// wrapExec surfaces the stderr of a failed command, which is the only place
+// systemctl/ssh explain themselves.
+func wrapExec(err error) error {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && len(ee.Stderr) > 0 {
+		msg := strings.TrimSpace(string(ee.Stderr))
+		if i := strings.IndexByte(msg, '\n'); i > 0 {
+			msg = msg[:i]
+		}
+		return fmt.Errorf("%v: %s", err, msg)
+	}
+	return err
+}
