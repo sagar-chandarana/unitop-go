@@ -160,8 +160,14 @@ func (m model) viewStartup() []string {
 			stFaint.Render("q  quit"),
 		)
 	} else {
+		// Reaching a host and finding it unusable is a different fact from not
+		// reaching it; saying "cannot reach" for the former sends people off
+		// debugging their network.
 		head := "cannot read systemd on " + target
-		if m.r.host != "" {
+		switch {
+		case m.fatal:
+			head = target + " cannot be watched"
+		case m.r.host != "":
 			head = "cannot reach " + target
 		}
 		body = append(body, stBad.Render("✗  "+head), "")
@@ -172,8 +178,11 @@ func (m model) viewStartup() []string {
 		for _, s := range troubleshoot(m.err, m.r.host) {
 			body = append(body, stSubtle.Render("  • ")+stBase.Render(s))
 		}
-		attempt := fmt.Sprintf("attempt %d · retrying every %gs", m.attempts, m.interval.Seconds())
-		body = append(body, "", stFaint.Render(attempt+"    ")+stKey.Render("R")+stFaint.Render(" retry now    ")+
+		status := fmt.Sprintf("attempt %d · retrying every %gs", m.attempts, m.interval.Seconds())
+		if m.fatal {
+			status = "not retrying" // nothing about this will change on its own
+		}
+		body = append(body, "", stFaint.Render(status+"    ")+stKey.Render("R")+stFaint.Render(" retry now    ")+
 			stKey.Render("q")+stFaint.Render(" quit"))
 	}
 
@@ -197,6 +206,13 @@ func (m model) viewStartup() []string {
 		lines[i] = strings.Repeat(" ", left) + block[i-top]
 	}
 	return lines
+}
+
+func sshPrefix(ssh bool, target string) string {
+	if ssh {
+		return "ssh " + target + " "
+	}
+	return ""
 }
 
 // troubleshoot turns a connection failure into the next thing to try. The
@@ -252,6 +268,16 @@ func troubleshoot(err, host string) []string {
 		}
 		return []string{
 			"the ssh client is not installed, or not on PATH",
+		}
+	case strings.Contains(e, "too old"), strings.Contains(e, "unrecognized option"):
+		return []string{
+			fmt.Sprintf("unitop needs systemd %d or newer on the machine it watches", minSystemd),
+			"check with: " + sshPrefix(ssh, target) + "systemctl --version",
+		}
+	case strings.Contains(e, "no systemd on"):
+		return []string{
+			"systemctl did not report a version — is systemd running there?",
+			"inside a container, the host's systemd is usually not reachable",
 		}
 	case strings.Contains(e, "no /proc"), strings.Contains(e, "list-units"):
 		return []string{

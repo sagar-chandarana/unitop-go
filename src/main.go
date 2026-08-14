@@ -72,9 +72,13 @@ usage: unitop [flags]
 
 `, version)
 	flag.PrintDefaults()
-	fmt.Fprint(out, `
+	fmt.Fprintf(out, `
 notes:
-  NET columns need IP accounting, which is off by default on most units. Enable
+  unitop needs systemd %d or newer on the machine it watches. It checks at
+  startup and reports the version if the host is too old.
+
+`, minSystemd)
+	fmt.Fprint(out, `  NET columns need IP accounting, which is off by default on most units. Enable
   it per unit with IPAccounting=yes, or fleet-wide with DefaultIPAccounting=yes
   in /etc/systemd/system.conf.
 

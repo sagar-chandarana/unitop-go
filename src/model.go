@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -52,6 +53,9 @@ type model struct {
 	connected bool
 	attempts  int
 	spinner   int
+	// fatal marks a failure retrying cannot fix — the target is not a machine
+	// unitop can work with. Polling stops rather than repeating forever.
+	fatal bool
 
 	cursor   int
 	topRow   int
@@ -157,7 +161,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		var cmds []tea.Cmd
 		cmds = append(cmds, tickCmd(m.interval))
-		if !m.paused && !m.polling {
+		if !m.paused && !m.polling && !m.fatal {
 			m.polling = true
 			cmds = append(cmds, m.pollCmd())
 		}
@@ -176,6 +180,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.err = msg.err.Error()
 			m.attempts++
+			var unsupported *UnsupportedError
+			m.fatal = errors.As(msg.err, &unsupported)
 		} else {
 			m.err = ""
 			m.connected = true
@@ -232,8 +238,10 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
 		case "R", "r", "enter":
+			// An explicit retry clears a fatal verdict: the user may have just
+			// upgraded systemd on the other end.
 			if !m.polling {
-				m.polling = true
+				m.polling, m.fatal = true, false
 				return m, m.pollCmd()
 			}
 		}

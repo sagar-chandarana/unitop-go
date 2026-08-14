@@ -156,6 +156,7 @@ type Collector struct {
 	r        runner
 	prev     map[string]sample
 	prevHost *hostSample
+	version  int // systemd major on the target, 0 until the first poll
 }
 
 func NewCollector(r runner) *Collector {
@@ -225,20 +226,91 @@ func rate(cur, prev uint64, dt float64) float64 {
 	return float64(cur-prev) / dt
 }
 
+// minSystemd is the oldest systemd unitop works with. v247 (December 2020) is
+// the first that accepts `systemctl show --timestamp=unix`; below it the
+// timestamps come back locale-formatted and `journalctl --output-fields` does
+// not exist either. Rather than carry a second code path for releases that old,
+// unitop checks the version up front and says so.
+const minSystemd = 247
+
+// parseSystemdVersion reads the major version out of the first line of
+// `systemctl --version`: "systemd 229" or "systemd 257 (257.7)".
+func parseSystemdVersion(s string) int {
+	f := strings.Fields(s)
+	if len(f) < 2 || f[0] != "systemd" {
+		return 0
+	}
+	num := f[1] // may be "257", "252.4-1" or "250~rc1"
+	for i, r := range num {
+		if r < '0' || r > '9' {
+			num = num[:i]
+			break
+		}
+	}
+	n, err := strconv.Atoi(num)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// UnsupportedError is a failure that retrying cannot fix: the far side is not
+// a machine unitop can work with. The UI stops polling on it rather than
+// hammering a host once a second forever.
+type UnsupportedError struct{ msg string }
+
+func (e *UnsupportedError) Error() string { return e.msg }
+
+// checkVersion turns the reported version into the error the user sees, so a
+// too-old or absent systemd fails immediately and legibly instead of surfacing
+// as `unrecognized option '--timestamp=unix'` several commands later.
+func checkVersion(version int, where string) error {
+	if version == 0 {
+		return &UnsupportedError{fmt.Sprintf(
+			"no systemd on %s: `systemctl --version` did not report one", where)}
+	}
+	if version < minSystemd {
+		return &UnsupportedError{fmt.Sprintf(
+			"systemd %d on %s is too old — unitop needs systemd %d or newer",
+			version, where, minSystemd)}
+	}
+	return nil
+}
+
+// target names the machine in error messages.
+func (r runner) target() string {
+	if r.host == "" {
+		return "this host"
+	}
+	return r.host
+}
+
 var listUnitsArgs = []string{
 	"list-units", "--type=service", "--all", "--plain", "--no-legend", "--no-pager",
 }
 
-// procMarker separates the /proc dump from the unit list when both are fetched
-// in one remote shell. It must not start with '#', which would make the rest
-// of the one-line script a comment, and it must not appear in /proc output.
-const procMarker = "@@unitop-units@@"
+// Markers separating the sections of the one-line remote poll script. Neither
+// may start with '#', which would comment out the rest of the line, and
+// neither may appear in /proc output.
+const (
+	verMarker  = "@@unitop-proc@@"
+	procMarker = "@@unitop-units@@"
+)
 
-// pollBase fetches the /proc files and the unit list. Locally that is a few
-// file reads plus one exec; remotely it is a single ssh round trip, which
-// matters because the poll interval is short and a distant host is not.
+// pollBase fetches the systemd version, the /proc files and the unit list.
+// Locally that is a few file reads plus an exec; remotely it is a single ssh
+// round trip, which matters because the poll interval is short and a distant
+// host is not. The version check happens here so an unusable systemd is
+// reported before anything else is attempted.
 func (c *Collector) pollBase(ctx context.Context) (map[string]string, []string, error) {
 	if c.r.host == "" {
+		if c.version == 0 {
+			out, _ := c.r.command(ctx, "systemctl", "--version").Output()
+			c.version = parseSystemdVersion(firstLineOf(string(out)))
+		}
+		if err := checkVersion(c.version, c.r.target()); err != nil {
+			return nil, nil, err
+		}
 		proc := readProcLocal()
 		out, err := c.r.command(ctx, "systemctl", listUnitsArgs...).Output()
 		if err != nil {
@@ -247,14 +319,27 @@ func (c *Collector) pollBase(ctx context.Context) (map[string]string, []string, 
 		return proc, parseUnitList(string(out)), nil
 	}
 
-	script := "grep -H '' " + strings.Join(procFiles, " ") + " 2>/dev/null; " +
+	script := "systemctl --version 2>/dev/null | head -1; echo '" + verMarker + "'; " +
+		"grep -H '' " + strings.Join(procFiles, " ") + " 2>/dev/null; " +
 		"echo '" + procMarker + "'; systemctl " + strings.Join(listUnitsArgs, " ")
 	out, err := c.r.command(ctx, "sh", "-c", script).Output()
 	if err != nil {
 		return nil, nil, fmt.Errorf("remote poll: %w", wrapExec(err))
 	}
-	head, tail, _ := strings.Cut(string(out), procMarker+"\n")
-	return parseProcDump(head), parseUnitList(tail), nil
+	ver, rest, _ := strings.Cut(string(out), verMarker+"\n")
+	proc, units, _ := strings.Cut(rest, procMarker+"\n")
+	c.version = parseSystemdVersion(firstLineOf(ver))
+	if err := checkVersion(c.version, c.r.target()); err != nil {
+		return nil, nil, err
+	}
+	return parseProcDump(proc), parseUnitList(units), nil
+}
+
+func firstLineOf(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 func parseUnitList(out string) []string {

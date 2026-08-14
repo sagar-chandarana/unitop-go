@@ -101,7 +101,7 @@ cd unitop-go/src && go build .
 | --- | --- |
 | **OS** | Linux with systemd. That is the whole subject matter — there is no macOS, BSD or Windows build. |
 | **Arch** | `amd64` and `arm64` binaries are published; anything Go targets builds from source. |
-| **systemd** | Tested against 257 and 258. Only long-standing unit properties are read, so older releases should work; counters systemd does not report show as `-`. |
+| **systemd** | **247 or newer** (December 2020) — that is the first release with `systemctl show --timestamp=unix`. unitop checks on startup and tells you if the host is older. Tested against 257 and 258; 229 is correctly refused. Counters a release does not report — IP accounting, `MemoryPeak` — show as `-`. |
 | **Terminal** | Anything with 256 colours. The palette adapts to light and dark themes. Mouse optional. |
 | **Privileges** | None to watch CPU/memory. The journal needs the `systemd-journal` group or root; unit actions need root or `-sudo`. |
 
