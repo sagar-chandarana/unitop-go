@@ -150,6 +150,9 @@ uptime`.
 | `?` | help |
 | `q` | quit |
 
+Sorting, filtering, tree and pane focus (`s` `S` `r` `t` `a` `/` `tab`) act on
+the table, so the full view ignores them and does not offer them.
+
 The mouse works too: the wheel scrolls whichever pane it is over, a click on a
 **column header** sorts by it (again to reverse), a click on a slice's `▾`
 toggles it, and a **right click on a unit** opens the action menu.

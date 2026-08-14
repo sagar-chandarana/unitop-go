@@ -553,3 +553,64 @@ func firstLine(s string) string {
 	}
 	return s
 }
+
+// Sorting, filtering, grouping and pane focus all act on the table. With no
+// table on screen they must do nothing, and must not be advertised.
+func TestFullViewIgnoresTableKeys(t *testing.T) {
+	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
+	m.width, m.height, m.ready = 140, 30, true
+	m.connected = true
+	m.units = testUnits()
+	m.rebuild()
+	m.activateRow()
+	if !m.fullView {
+		t.Fatal("enter did not open the full view")
+	}
+
+	before := struct {
+		sortBy         sortKey
+		reverse, tree  bool
+		showAll, input bool
+		focus          focusArea
+	}{m.sortBy, m.reverse, m.tree, m.showAll, m.filterInput, m.focus}
+
+	for _, k := range []string{"s", "S", "r", "t", "a", "/", "tab"} {
+		m.handleKey(keyOf(k))
+		if m.sortBy != before.sortBy || m.reverse != before.reverse || m.tree != before.tree ||
+			m.showAll != before.showAll || m.filterInput != before.input || m.focus != before.focus {
+			t.Errorf("%q changed state in the full view", k)
+		}
+		if !m.fullView {
+			t.Fatalf("%q dropped out of the full view", k)
+		}
+	}
+
+	foot := stripANSI(m.viewFooter())
+	for _, gone := range []string{"s sort", "r rev", "t tree", "/ filter", "a all", "tab focus", "l log"} {
+		if strings.Contains(foot, gone) {
+			t.Errorf("footer still offers %q in the full view: %s", gone, foot)
+		}
+	}
+	for _, kept := range []string{"enter/esc back", "x actions", "f follow", "q quit"} {
+		if !strings.Contains(foot, kept) {
+			t.Errorf("footer dropped %q, which still works: %s", kept, foot)
+		}
+	}
+
+	// The same keys keep working once the table is back.
+	m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	m.handleKey(keyOf("t"))
+	if !m.tree {
+		t.Error("t stopped working after leaving the full view")
+	}
+	if !strings.Contains(stripANSI(m.viewFooter()), "s sort") {
+		t.Error("the table footer lost its sort hint")
+	}
+}
+
+func keyOf(s string) tea.KeyMsg {
+	if s == "tab" {
+		return tea.KeyMsg{Type: tea.KeyTab}
+	}
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+}

@@ -291,3 +291,46 @@ func TestActionArgsAreWellFormed(t *testing.T) {
 		}
 	}
 }
+
+// With no table on screen there is no row to point at, so the popup must land
+// somewhere predictable rather than wherever the hidden cursor happens to be.
+func TestFullViewMenuAnchorIsStable(t *testing.T) {
+	m := actionModel(t)
+	m.units = append(m.units, Unit{Name: "extra.service", Active: "active", Sub: "running",
+		Slice: "system.slice", MemCurrent: 1 << 20, Tasks: 1, NRestarts: 0})
+	m.rebuild()
+	m.activateRow()
+	if !m.fullView {
+		t.Fatal("not in the full view")
+	}
+
+	seen := map[int]bool{}
+	for _, cursor := range []int{0, 1, 2} {
+		if cursor >= len(m.rows) {
+			continue
+		}
+		m.cursor = cursor
+		x, y := m.menuAnchor()
+		seen[y] = true
+		if x != 4 {
+			t.Errorf("cursor %d: x = %d", cursor, x)
+		}
+		// It must clear the host block and the unit summary above the log.
+		if y < m.headerLines() {
+			t.Errorf("cursor %d: popup at y=%d overlaps the host block", cursor, y)
+		}
+	}
+	if len(seen) != 1 {
+		t.Errorf("the popup moved with the hidden cursor: rows %v", seen)
+	}
+
+	// In the table it still points at the selected row.
+	m.fullView = false
+	m.cursor, m.topRow = 0, 0
+	_, y0 := m.menuAnchor()
+	m.cursor = 2
+	_, y2 := m.menuAnchor()
+	if y2 <= y0 {
+		t.Errorf("in the table the popup should follow the row: %d then %d", y0, y2)
+	}
+}

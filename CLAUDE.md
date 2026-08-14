@@ -118,6 +118,13 @@ These are decisions, not accidents. Change them deliberately, not incidentally.
 - **No charts.** Sparklines were built and then removed on request. The full
   view shows live numbers, not history. Don't reintroduce them.
 - **Prefer simple over clever** in the UI. Every added key and pane is a cost.
+- **A key that cannot do anything is not offered.** `tableOnlyKeys` are inert in
+  the full view and dropped from the footer, as `l` is. Anything anchored to a
+  table row needs a second answer for the full view — see `menuAnchor()`, which
+  otherwise put the popup wherever the invisible cursor happened to be.
+- **An overlay covers its own width, not the rest of the line.** `overlayMenu`
+  rebuilds each covered row as prefix + box + `sliceANSI(rest)`. Dropping the
+  tail blanks out half the screen.
 - **Read-only is the safe default posture.** Actions are opt-in via `x` /
   right-click, destructive ones confirm, and `-read-only` removes them entirely.
 - **Never invoke interactive polkit.** It would seize the terminal. Actions run

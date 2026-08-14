@@ -21,6 +21,17 @@ const (
 	focusLogs
 )
 
+// tableOnlyKeys sort, filter, group or move focus between panes — all of which
+// act on the unit table. In the full view there is no table to act on.
+var tableOnlyKeys = map[string]bool{
+	"s": true, "S": true, // sort column
+	"r":   true, // reverse
+	"t":   true, // tree
+	"a":   true, // include inactive
+	"/":   true, // filter
+	"tab": true,
+}
+
 type tickMsg time.Time
 
 type spinnerTickMsg struct{}
@@ -252,6 +263,12 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	// The full view has no table, so the keys that act on one do nothing there.
+	// They are not offered in the footer either.
+	if m.fullView && tableOnlyKeys[msg.String()] {
+		return m, nil
+	}
+
 	if m.filterInput {
 		switch msg.Type {
 		case tea.KeyEnter:
@@ -374,7 +391,8 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.activateRow()
 	case "x":
 		if r, ok := m.selectedRow(); ok && r.kind == rowUnit {
-			m.openMenu(r.unit.Name, 4, min(m.cursor-m.topRow+m.headerLines()+2, m.height-4))
+			x, y := m.menuAnchor()
+			m.openMenu(r.unit.Name, x, y)
 		}
 		return m, nil
 	}
@@ -383,6 +401,17 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.logKey(msg.String())
 	}
 	return m, m.listKey(msg.String())
+}
+
+// menuAnchor is where a keyboard-opened popup goes. In the table it points at
+// the selected row. The full view has no rows, so anchoring to the cursor put
+// it at an arbitrary height over the log; there it sits just under the unit
+// summary instead, in the same place every time.
+func (m model) menuAnchor() (int, int) {
+	if m.fullView {
+		return 4, m.headerLines() + m.detailHeight()
+	}
+	return 4, min(m.cursor-m.topRow+m.headerLines()+2, m.height-4)
 }
 
 // activateRow is Enter: on a slice it expands or collapses; on a unit it opens

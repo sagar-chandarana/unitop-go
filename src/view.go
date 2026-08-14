@@ -1006,8 +1006,11 @@ func (m model) viewFooter() string {
 	}
 	if m.fullView {
 		keys[1] = [2]string{"enter/esc", "back"}
-		// l does nothing here, so it is not offered.
-		keys = slices.DeleteFunc(keys, func(k [2]string) bool { return k[0] == "l" })
+		// Offer only what actually does something without a table on screen.
+		keys = slices.DeleteFunc(keys, func(k [2]string) bool {
+			return k[0] == "l" || tableOnlyKeys[k[0]]
+		})
+		keys = slices.Insert(keys, len(keys)-2, [2]string{"w", "wrap"})
 	}
 	// Fit whole hints, dropping the ones that do not fit. Cutting the line at
 	// the width instead would leave a half-written key, which reads as a
@@ -1068,6 +1071,7 @@ func (m model) viewHelp() []string {
 		out = append(out, "  "+stKey.Render(padLeft(r[0], 11))+"  "+stBase.Render(r[1]))
 	}
 	out = append(out, "",
+		stSubtle.Render("  Sorting, filtering, tree and focus act on the table, so the full view ignores them."),
 		stSubtle.Render("  CPU%, NET and IO are rates between polls; MEM is the current cgroup total."),
 		stSubtle.Render("  NET needs IPAccounting=yes on the unit (or DefaultIPAccounting=yes system-wide)."),
 		stSubtle.Render("  Reading logs needs membership of systemd-journal, or root."),
