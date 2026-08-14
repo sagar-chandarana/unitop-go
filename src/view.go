@@ -113,6 +113,9 @@ func (m model) View() string {
 	if !m.ready && m.width == 0 {
 		return "starting…"
 	}
+	if !m.connected {
+		return strings.Join(m.viewStartup(), "\n")
+	}
 	lines := m.viewHost()
 	if m.help {
 		lines = append(lines, m.viewHelp()...)
@@ -129,6 +132,143 @@ func (m model) View() string {
 		lines = m.overlayMenu(lines)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// ---------- startup ----------
+
+var spinnerFrames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+
+// viewStartup owns the screen until the first poll succeeds. Rendering the
+// normal UI before then would show an empty table of a host we have not
+// reached yet, with the reason buried in the footer.
+func (m model) viewStartup() []string {
+	var body []string
+	target := m.hostLabel
+	if m.r.host != "" {
+		target = m.r.host
+	}
+
+	if m.err == "" {
+		frame := string(spinnerFrames[m.spinner%len(spinnerFrames)])
+		what := "reading systemd on " + target
+		if m.r.host != "" {
+			what = "connecting to " + target
+		}
+		body = append(body,
+			lipgloss.NewStyle().Foreground(colMauve).Render(frame)+"  "+stBase.Render(what+"…"),
+			"",
+			stFaint.Render("q  quit"),
+		)
+	} else {
+		head := "cannot read systemd on " + target
+		if m.r.host != "" {
+			head = "cannot reach " + target
+		}
+		body = append(body, stBad.Render("✗  "+head), "")
+		for _, l := range wrapWords(m.err, min(72, max(20, m.width-6))) {
+			body = append(body, lipgloss.NewStyle().Foreground(colRed).Render(l))
+		}
+		body = append(body, "", stColHead.Render("try:"))
+		for _, s := range troubleshoot(m.err, m.r.host) {
+			body = append(body, stSubtle.Render("  • ")+stBase.Render(s))
+		}
+		attempt := fmt.Sprintf("attempt %d · retrying every %gs", m.attempts, m.interval.Seconds())
+		body = append(body, "", stFaint.Render(attempt+"    ")+stKey.Render("R")+stFaint.Render(" retry now    ")+
+			stKey.Render("q")+stFaint.Render(" quit"))
+	}
+
+	// Centre the block, and left-align its lines with each other so the
+	// wrapped error and the bullet list do not stagger.
+	inner := 0
+	for _, l := range body {
+		inner = max(inner, lipgloss.Width(l))
+	}
+	left := max(0, (m.width-inner)/2)
+	title := stHeader.Render("unitop")
+	block := append([]string{title, ""}, body...)
+
+	lines := make([]string, m.height)
+	top := max(0, (m.height-len(block))/2)
+	for i := range lines {
+		if i < top || i-top >= len(block) {
+			lines[i] = ""
+			continue
+		}
+		lines[i] = strings.Repeat(" ", left) + block[i-top]
+	}
+	return lines
+}
+
+// troubleshoot turns a connection failure into the next thing to try. The
+// strings systemd, ssh and the shell produce here are stable enough to match on.
+func troubleshoot(err, host string) []string {
+	e := strings.ToLower(err)
+	ssh := host != ""
+	target := host
+	if target == "" {
+		target = "this host"
+	}
+
+	switch {
+	case strings.Contains(e, "permission denied"), strings.Contains(e, "publickey"):
+		return []string{
+			"unitop only does key auth (BatchMode); it never prompts for a password",
+			"check it works by hand: ssh -o BatchMode=yes " + target + " true",
+			"install your key if that fails: ssh-copy-id " + target,
+		}
+	case strings.Contains(e, "host key verification failed"):
+		return []string{
+			"the host key is unknown or changed, and BatchMode cannot prompt",
+			"connect once by hand to review and accept it: ssh " + target,
+		}
+	case strings.Contains(e, "could not resolve"), strings.Contains(e, "name or service not known"),
+		strings.Contains(e, "nodename nor servname"):
+		return []string{
+			"the name does not resolve — check the spelling, DNS, or your ssh config",
+			"an IP works too: unitop -H root@192.0.2.10",
+		}
+	case strings.Contains(e, "connection timed out"), strings.Contains(e, "no route to host"),
+		strings.Contains(e, "network is unreachable"):
+		return []string{
+			"the host is not answering on port 22 — check it is up and reachable",
+			"a firewall or a VPN you are not on can look exactly like this",
+		}
+	case strings.Contains(e, "connection refused"):
+		return []string{
+			"port 22 is closed — sshd may not be running, or it listens elsewhere",
+			"for a non-standard port, set it in ~/.ssh/config for this host",
+		}
+	case strings.Contains(e, "connection closed"), strings.Contains(e, "broken pipe"),
+		strings.Contains(e, "kex_exchange"):
+		return []string{
+			"the connection dropped during setup — often rate limiting or a flaky link",
+			"retry, and check the host's auth log if it keeps happening",
+		}
+	case strings.Contains(e, "command not found"), strings.Contains(e, "executable file not found"):
+		if ssh && !strings.Contains(e, "ssh:") {
+			return []string{
+				"systemctl is missing on " + target + " — is it actually a systemd host?",
+			}
+		}
+		return []string{
+			"the ssh client is not installed, or not on PATH",
+		}
+	case strings.Contains(e, "no /proc"), strings.Contains(e, "list-units"):
+		return []string{
+			"systemd did not answer — check: systemctl list-units --type=service",
+			"inside a container, the host's systemd is usually not reachable",
+		}
+	}
+
+	if ssh {
+		return []string{
+			"reproduce it by hand: ssh " + target + " systemctl list-units --type=service",
+			"unitop needs key auth and a systemd host at the other end",
+		}
+	}
+	return []string{
+		"reproduce it by hand: systemctl list-units --type=service",
+	}
 }
 
 // hjoin puts left and right on one line of exactly m.width columns, right

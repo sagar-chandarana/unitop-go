@@ -122,6 +122,34 @@ zero for that interval rather than as a spike.
 `-` means systemd is not tracking that counter for the unit; `·` means it is
 tracked but there is not yet a second sample, or the rate is zero.
 
+## Starting up
+
+Nothing is drawn until the first poll succeeds — a spinner and `connecting to
+<host>…` hold the screen instead of an empty table for a machine that may not
+be reachable. If the poll fails, the screen shows the error, what to try about
+it, and how many attempts have been made; it keeps retrying on the interval,
+and `R` retries immediately.
+
+```
+                              unitop
+
+                ✗  cannot reach root@server1
+
+                remote poll: exit status 255: ssh: connect to host
+                server1 port 22: No route to host
+
+                try:
+                  • the host is not answering on port 22 — check it is
+                    up and reachable
+                  • a firewall or a VPN you are not on can look exactly
+                    like this
+
+                attempt 3 · retrying every 1s    R retry now    q quit
+```
+
+Once connected, a later failed poll is reported in the status line rather than
+taking over the screen — the last good data stays visible.
+
 ## Requirements
 
 - **Network columns** need IP accounting, which is off by default for most

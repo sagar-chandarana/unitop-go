@@ -148,6 +148,7 @@ func TestLayoutDropsLowestPriorityFirst(t *testing.T) {
 func TestNextVisibleSortWalksVisibleColumns(t *testing.T) {
 	m := newModel(runner{}, "h", time.Second, sortName, false, false, false, "")
 	m.width, m.height = 200, 40
+	m.connected = true
 	m.showLogs = false
 
 	cols := m.layout(m.tableWidth())
@@ -175,6 +176,7 @@ func TestNextVisibleSortWalksVisibleColumns(t *testing.T) {
 func TestColumnAtMapsClickToSortKey(t *testing.T) {
 	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
 	m.width, m.height = 200, 40
+	m.connected = true
 	m.showLogs = false
 
 	cols := m.layout(m.tableWidth())
@@ -313,6 +315,7 @@ func TestHumanRateFullSpellsOutZero(t *testing.T) {
 func TestViewRendersWithoutData(t *testing.T) {
 	m := newModel(runner{}, "testhost", time.Second, sortCPU, false, false, false, "")
 	m.width, m.height, m.ready = 120, 30, true
+	m.connected = true // these fixtures stand in for a model that has already polled
 	m.rebuild()
 	out := m.View()
 	if !strings.Contains(out, "testhost") {
@@ -338,6 +341,7 @@ func testUnits() []Unit {
 func TestViewRendersRows(t *testing.T) {
 	m := newModel(runner{}, "testhost", time.Second, sortCPU, false, false, false, "")
 	m.width, m.height, m.ready = 140, 24, true
+	m.connected = true // these fixtures stand in for a model that has already polled
 	m.units = testUnits()
 	m.host = HostStats{OK: true, NCPU: 8, MemTotal: 16 << 30, MemUsed: 4 << 30, CPUPct: 12}
 	m.rebuild()
@@ -357,6 +361,7 @@ func TestViewRendersRows(t *testing.T) {
 func TestEnterTogglesFullView(t *testing.T) {
 	m := newModel(runner{}, "testhost", time.Second, sortCPU, false, false, false, "")
 	m.width, m.height, m.ready = 140, 30, true
+	m.connected = true // these fixtures stand in for a model that has already polled
 	m.units = testUnits()
 	m.rebuild()
 
@@ -410,6 +415,7 @@ func TestEnterTogglesFullView(t *testing.T) {
 func TestLogToggleIsInertInFullView(t *testing.T) {
 	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
 	m.width, m.height, m.ready = 140, 30, true
+	m.connected = true // these fixtures stand in for a model that has already polled
 	m.units = testUnits()
 	m.rebuild()
 	m.activateRow()
@@ -443,6 +449,7 @@ func TestLogToggleIsInertInFullView(t *testing.T) {
 func TestEnterOnSliceDoesNotOpenFullView(t *testing.T) {
 	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, true, "")
 	m.width, m.height, m.ready = 140, 30, true
+	m.connected = true // these fixtures stand in for a model that has already polled
 	m.units = treeUnits()
 	m.rebuild()
 	m.cursor = 0
@@ -459,6 +466,7 @@ func TestEnterOnSliceDoesNotOpenFullView(t *testing.T) {
 func TestRowAtMatchesRenderedRows(t *testing.T) {
 	m := newModel(runner{}, "testhost", time.Second, sortCPU, false, false, false, "")
 	m.width, m.height, m.ready = 140, 24, true
+	m.connected = true // these fixtures stand in for a model that has already polled
 	m.units = testUnits()
 	m.rebuild()
 

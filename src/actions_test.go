@@ -13,6 +13,7 @@ func actionModel(t *testing.T) *model {
 	t.Helper()
 	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
 	m.width, m.height, m.ready = 140, 30, true
+	m.connected = true // these fixtures stand in for a model that has already polled
 	m.units = testUnits()
 	m.rebuild()
 	return &m
@@ -23,6 +24,7 @@ func actionModel(t *testing.T) *model {
 func TestMenuOpensOnUnitsOnly(t *testing.T) {
 	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, true, "")
 	m.width, m.height, m.ready = 140, 30, true
+	m.connected = true // these fixtures stand in for a model that has already polled
 	m.units = treeUnits()
 	m.rebuild()
 

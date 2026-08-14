@@ -22,6 +22,8 @@ const (
 
 type tickMsg time.Time
 
+type spinnerTickMsg struct{}
+
 type unitsMsg struct {
 	units []Unit
 	host  HostStats
@@ -43,6 +45,13 @@ type model struct {
 	polling  bool
 	paused   bool
 	interval time.Duration
+
+	// connected goes true on the first poll that comes back without an error.
+	// Until then the normal UI would be an empty table with the failure buried
+	// in the footer, so the startup screen is shown instead.
+	connected bool
+	attempts  int
+	spinner   int
 
 	cursor   int
 	topRow   int
@@ -99,11 +108,18 @@ func newModel(r runner, hostLabel string, interval time.Duration, sortBy sortKey
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(m.pollCmd(), tickCmd(m.interval))
+	return tea.Batch(m.pollCmd(), tickCmd(m.interval), spinnerTickCmd())
 }
 
 func tickCmd(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+// spinnerTickCmd animates the startup screen. It runs faster than the poll
+// interval so the spinner still moves while a slow ssh connection is opening,
+// and stops re-arming once the first poll lands.
+func spinnerTickCmd() tea.Cmd {
+	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg { return spinnerTickMsg{} })
 }
 
 func (m model) pollCmd() tea.Cmd {
@@ -147,13 +163,22 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
+	case spinnerTickMsg:
+		if m.connected {
+			return m, nil // stop animating; nothing re-arms it
+		}
+		m.spinner++
+		return m, spinnerTickCmd()
+
 	case unitsMsg:
 		m.polling = false
 		m.lastPoll = time.Now()
 		if msg.err != nil {
 			m.err = msg.err.Error()
+			m.attempts++
 		} else {
 			m.err = ""
+			m.connected = true
 			m.units = msg.units
 			m.host = msg.host
 		}
@@ -200,6 +225,21 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Before the first successful poll there is nothing to navigate, sort or
+	// act on, so only quitting and retrying mean anything.
+	if !m.connected {
+		switch msg.String() {
+		case "q", "ctrl+c", "esc":
+			return m, tea.Quit
+		case "R", "r", "enter":
+			if !m.polling {
+				m.polling = true
+				return m, m.pollCmd()
+			}
+		}
+		return m, nil
+	}
+
 	if handled, cmd := m.menuKey(msg.String()); handled {
 		return m, cmd
 	}

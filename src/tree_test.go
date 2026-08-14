@@ -130,6 +130,7 @@ func TestTreeSiblingsFollowTheSortKey(t *testing.T) {
 func TestTreeCursorAndCollapseKeys(t *testing.T) {
 	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, true, "")
 	m.width, m.height, m.ready = 140, 30, true
+	m.connected = true // these fixtures stand in for a model that has already polled
 	m.units = treeUnits()
 	m.rebuild()
 
@@ -161,6 +162,7 @@ func TestTreeCursorAndCollapseKeys(t *testing.T) {
 func TestSelectedUnitIgnoresSliceRows(t *testing.T) {
 	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, true, "")
 	m.width, m.height, m.ready = 140, 30, true
+	m.connected = true // these fixtures stand in for a model that has already polled
 	m.units = treeUnits()
 	m.rebuild()
 	m.cursor = 0 // the root slice

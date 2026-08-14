@@ -122,6 +122,14 @@ These are decisions, not accidents. Change them deliberately, not incidentally.
   right-click, destructive ones confirm, and `-read-only` removes them entirely.
 - **Never invoke interactive polkit.** It would seize the terminal. Actions run
   `systemctl` directly and report the privilege error; `-sudo` uses `sudo -n`.
+- **Nothing renders before the first successful poll.** `connected` gates the
+  whole UI; until then `viewStartup()` owns the screen. Drawing an empty table
+  for a host we have not reached yet, with the reason one line deep in the
+  footer, is exactly what this replaced. A failure *after* connecting stays in
+  the footer — there is real data on screen worth keeping.
+- **A failure says what to do next.** `troubleshoot()` turns an ssh or systemd
+  error into concrete next steps. Add a case there rather than leaving a new
+  failure mode to the generic advice.
 - **Report what happened, not what systemd literally said.** `StateLabel()`
   exists because `inactive/dead` covers four different situations. When the
   friendly label differs from systemd's wording, the detail pane shows both.
