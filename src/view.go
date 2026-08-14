@@ -874,6 +874,12 @@ func (m model) overlayMenu(lines []string) []string {
 		x = max(0, (m.width-lipgloss.Width(box[0]))/2)
 		y = max(0, m.height/2-len(box)/2)
 	}
+	// The popup covers its own width and no more: the table keeps rendering on
+	// both sides of it, as a popup should.
+	boxW := 0
+	for _, bl := range box {
+		boxW = max(boxW, lipgloss.Width(bl))
+	}
 	for i, bl := range box {
 		row := y + i
 		if row < 0 || row >= len(lines) {
@@ -881,9 +887,66 @@ func (m model) overlayMenu(lines []string) []string {
 		}
 		prefix := truncANSI(lines[row], x)
 		prefix += strings.Repeat(" ", max(0, x-lipgloss.Width(prefix)))
-		lines[row] = prefix + bl
+		lines[row] = prefix + bl + sliceANSI(lines[row], x+boxW)
 	}
 	return lines
+}
+
+// sliceANSI returns the part of s from visible column `from` onward, carrying
+// the styling that was in effect there so the tail keeps its colours.
+func sliceANSI(s string, from int) string {
+	var style, out strings.Builder
+	var esc strings.Builder
+	visible, inEsc := 0, false
+	for _, r := range s {
+		if r == '\x1b' {
+			inEsc = true
+			esc.Reset()
+			esc.WriteRune(r)
+			continue
+		}
+		if inEsc {
+			esc.WriteRune(r)
+			if r == 'm' {
+				inEsc = false
+				// Sequences before the cut set the state we must restore;
+				// after it they belong to the output verbatim.
+				if visible < from {
+					style.WriteString(esc.String())
+				} else {
+					out.WriteString(esc.String())
+				}
+			}
+			continue
+		}
+		if visible >= from {
+			out.WriteRune(r)
+		}
+		visible++
+	}
+	if strings.TrimSpace(stripSGR(out.String())) == "" {
+		return "" // nothing but padding out there
+	}
+	return style.String() + out.String()
+}
+
+func stripSGR(s string) string {
+	var b strings.Builder
+	inEsc := false
+	for _, r := range s {
+		if r == '\x1b' {
+			inEsc = true
+			continue
+		}
+		if inEsc {
+			if r == 'm' {
+				inEsc = false
+			}
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func (m model) menuBox() []string {
