@@ -196,7 +196,7 @@ func (m model) viewStartup() []string {
 			what = "connecting to " + target
 		}
 		body = append(body,
-			lipgloss.NewStyle().Foreground(colMauve).Render(frame)+"  "+stBase.Render(what+"…"),
+			lipgloss.NewStyle().Foreground(colMagenta).Render(frame)+"  "+stBase.Render(what+"…"),
 			"",
 			stFaint.Render("q  quit"),
 		)
@@ -379,22 +379,22 @@ func (m model) viewHost() []string {
 			ident = append(ident, stSubtle.Render("up "+humanDur(h.Uptime)))
 		}
 		ident = append(ident, stSubtle.Render("load ")+
-			lipgloss.NewStyle().Foreground(heat(h.LoadPct(), 20, 70, 100, 150)).
+			lipgloss.NewStyle().Foreground(heat(h.LoadPct(), 20, 70, 100)).
 				Render(fmt.Sprintf("%.2f %.2f %.2f", h.Load[0], h.Load[1], h.Load[2])))
 	}
 
 	usage := []string{
-		stSubtle.Render("cpu ") + lipgloss.NewStyle().Foreground(heat(h.CPUPct, 5, 40, 70, 90)).
+		stSubtle.Render("cpu ") + lipgloss.NewStyle().Foreground(heat(h.CPUPct, 5, 50, 85)).
 			Render(fmt.Sprintf("%.0f%%", h.CPUPct)),
-		stSubtle.Render("mem ") + lipgloss.NewStyle().Foreground(heat(h.MemPct(), 25, 60, 80, 92)).
+		stSubtle.Render("mem ") + lipgloss.NewStyle().Foreground(heat(h.MemPct(), 25, 70, 90)).
 			Render(humanBytes(h.MemUsed)) + stFaint.Render("/"+humanBytes(h.MemTotal)),
 	}
 	if h.SwapTotal > 0 && h.SwapUsed > 0 {
 		usage = append(usage, stSubtle.Render("swap ")+
-			lipgloss.NewStyle().Foreground(heat(h.SwapPct(), 1, 20, 50, 80)).Render(humanBytes(h.SwapUsed)))
+			lipgloss.NewStyle().Foreground(heat(h.SwapPct(), 1, 20, 60)).Render(humanBytes(h.SwapUsed)))
 	}
 	usage = append(usage, stSubtle.Render("net ")+
-		lipgloss.NewStyle().Foreground(colTeal).Render("↓"+humanRateFull(h.NetIn)+" ↑"+humanRateFull(h.NetOut)))
+		lipgloss.NewStyle().Foreground(colCyan).Render("↓"+humanRateFull(h.NetIn)+" ↑"+humanRateFull(h.NetOut)))
 
 	units := fmt.Sprintf("%s%s%s units",
 		stGood.Render(fmt.Sprint(active)), stFaint.Render("/"), stSubtle.Render(fmt.Sprint(len(m.units))))
@@ -459,7 +459,7 @@ func (m model) viewBody() []string {
 		if len(right) > 0 {
 			if len(left) > 0 {
 				if m.focus == focusLogs {
-					row += " " + lipgloss.NewStyle().Foreground(colMauve).Render("┃") + " "
+					row += " " + lipgloss.NewStyle().Foreground(colMagenta).Render("┃") + " "
 				} else {
 					row += " " + stBorder.Render("│") + " "
 				}
@@ -553,7 +553,10 @@ func (m model) viewRow(r row, cols []colDef, selected bool) string {
 			s = padLeft(text, c.width)
 		}
 		if selected {
-			style = style.Background(colSelBg)
+			// One uniform bar, as htop draws it. Keeping the per-cell colours
+			// over a background would put grey text on a grey ground, and the
+			// row already stands out by being highlighted at all.
+			style = lipgloss.NewStyle().Foreground(colSelFg).Background(colSelBg)
 		}
 		cells = append(cells, style.Render(s))
 	}
@@ -603,17 +606,17 @@ func cellFor(r row, c colDef, idx int) (string, lipgloss.Style) {
 			if !r.expanded {
 				twisty = "▸ "
 			}
-			st := lipgloss.NewStyle().Foreground(colMauve).Bold(true)
+			st := lipgloss.NewStyle().Foreground(colMagenta).Bold(true)
 			if r.nFailed > 0 {
 				st = st.Foreground(colRed)
 			}
 			return indent + twisty + sliceLabel(r.slice), st
 		}
-		st := lipgloss.NewStyle().Foreground(colText)
+		st := lipgloss.NewStyle().Foreground(colDefault)
 		if u.Failed() {
 			st = st.Foreground(colRed).Bold(true)
 		} else if u.Active == "inactive" {
-			st = st.Foreground(colSubtle)
+			st = st.Foreground(colGrey)
 		}
 		return indent + shortUnit(u.Name), st
 	}
@@ -633,14 +636,14 @@ func cellFor(r row, c colDef, idx int) (string, lipgloss.Style) {
 		if u.CPUNSec == unsetU64 || !u.HasRates {
 			return "-", stFaint
 		}
-		return fmt.Sprintf("%.1f", u.CPUPct), lipgloss.NewStyle().Foreground(heat(u.CPUPct, 1, 20, 60, 150))
+		return fmt.Sprintf("%.1f", u.CPUPct), lipgloss.NewStyle().Foreground(heat(u.CPUPct, 1, 25, 100))
 
 	case "MEM":
 		if u.MemCurrent == unsetU64 {
 			return "-", stFaint
 		}
 		mb := float64(u.MemCurrent) / (1024 * 1024)
-		return humanBytes(u.MemCurrent), lipgloss.NewStyle().Foreground(heat(mb, 16, 128, 512, 2048))
+		return humanBytes(u.MemCurrent), lipgloss.NewStyle().Foreground(heat(mb, 16, 256, 1024))
 
 	case "NET↓", "NET↑":
 		if !u.IPAccount {
@@ -653,7 +656,7 @@ func cellFor(r row, c colDef, idx int) (string, lipgloss.Style) {
 		if !u.HasRates {
 			return "·", stFaint
 		}
-		return humanRate(v), lipgloss.NewStyle().Foreground(heat(v, 1024, 64*1024, 1024*1024, 16*1024*1024))
+		return humanRate(v), lipgloss.NewStyle().Foreground(heat(v, 1024, 256*1024, 4*1024*1024))
 
 	case "IO↓", "IO↑":
 		v, raw := u.IORRate, u.IORead
@@ -666,7 +669,7 @@ func cellFor(r row, c colDef, idx int) (string, lipgloss.Style) {
 		if !u.HasRates {
 			return "·", stFaint
 		}
-		return humanRate(v), lipgloss.NewStyle().Foreground(heat(v, 1024, 256*1024, 4*1024*1024, 64*1024*1024))
+		return humanRate(v), lipgloss.NewStyle().Foreground(heat(v, 1024, 1024*1024, 16*1024*1024))
 
 	case "RST":
 		if u.NRestarts == unsetU64 {
@@ -688,7 +691,7 @@ func cellFor(r row, c colDef, idx int) (string, lipgloss.Style) {
 		d := time.Since(u.ActiveSince)
 		st := stSubtle
 		if d < 2*time.Minute {
-			st = lipgloss.NewStyle().Foreground(colPeach)
+			st = lipgloss.NewStyle().Foreground(colYellow)
 		}
 		return humanDur(d), st
 
@@ -781,7 +784,7 @@ func (m model) unitDetail(u Unit, width int) []string {
 	// What it actually runs, and what it says about itself.
 	if u.StatusText != "" {
 		lines = append(lines, truncANSI(stSubtle.Render("status ")+
-			lipgloss.NewStyle().Foreground(colTeal).Render(u.StatusText), width))
+			lipgloss.NewStyle().Foreground(colCyan).Render(u.StatusText), width))
 	}
 	if u.ExecStart != "" {
 		lines = append(lines, truncANSI(stSubtle.Render("exec ")+stFaint.Render(u.ExecStart), width))
@@ -799,7 +802,7 @@ func fileStateStyle(s string) lipgloss.Style {
 	case "masked", "masked-runtime":
 		return lipgloss.NewStyle().Foreground(colRed).Bold(true)
 	case "disabled":
-		return lipgloss.NewStyle().Foreground(colPeach)
+		return lipgloss.NewStyle().Foreground(colYellow)
 	case "enabled", "enabled-runtime":
 		return lipgloss.NewStyle().Foreground(colGreen)
 	}
@@ -825,7 +828,7 @@ func stateText(u Unit) string {
 // unitLive is the current CPU/memory/network/disk of one unit, coloured on the
 // same scales as the table columns.
 func (m model) unitLive(u Unit) string {
-	field := func(label, value string, c lipgloss.AdaptiveColor) string {
+	field := func(label, value string, c lipgloss.TerminalColor) string {
 		return stSubtle.Render(label+" ") + lipgloss.NewStyle().Foreground(c).Render(value)
 	}
 
@@ -841,15 +844,15 @@ func (m model) unitLive(u Unit) string {
 		}
 	}
 	parts := []string{
-		field("cpu", cpu, heat(u.CPUPct, 1, 20, 60, 150)),
-		field("mem", mem, heat(float64(orZero(u.MemCurrent))/(1<<20), 16, 128, 512, 2048)),
+		field("cpu", cpu, heat(u.CPUPct, 1, 25, 100)),
+		field("mem", mem, heat(float64(orZero(u.MemCurrent))/(1<<20), 16, 256, 1024)),
 	}
 	if u.MemPeak != unsetU64 && u.MemPeak > 0 {
 		parts = append(parts, stFaint.Render("peak "+humanBytes(u.MemPeak)))
 	}
 	if u.IPAccount {
 		parts = append(parts, field("net",
-			"↓"+humanRateFull(u.NetInRate)+" ↑"+humanRateFull(u.NetOutRate), colTeal))
+			"↓"+humanRateFull(u.NetInRate)+" ↑"+humanRateFull(u.NetOutRate), colCyan))
 	} else {
 		parts = append(parts, stSubtle.Render("net ")+stFaint.Render("off"))
 	}
@@ -942,7 +945,7 @@ func (m model) logTopMarker(width int) string {
 	switch {
 	case m.loadingOlder:
 		frame := string(spinnerFrames[m.spinner%len(spinnerFrames)])
-		return lipgloss.NewStyle().Foreground(colMauve).Render(frame) +
+		return lipgloss.NewStyle().Foreground(colMagenta).Render(frame) +
 			stWarn.Render(" loading earlier entries…")
 	case m.logLoadErr != "":
 		return stBad.Render("── could not load earlier entries: ") +
@@ -1086,16 +1089,16 @@ func stripSGR(s string) string {
 
 func (m model) menuBox() []string {
 	w := menuWidth(m.menu.unit)
-	border := lipgloss.NewStyle().Foreground(colMauve)
+	border := lipgloss.NewStyle().Foreground(colMagenta)
 	out := []string{border.Render("╭") + stHeader.Render(pad(" "+truncRunes(shortUnit(m.menu.unit), w-3)+" ", w-2)) + border.Render("╮")}
 	for i, a := range unitActions {
 		label := pad(" "+a.label, w-2)
 		st := stBase
 		if a.confirm {
-			st = lipgloss.NewStyle().Foreground(colPeach)
+			st = lipgloss.NewStyle().Foreground(colYellow)
 		}
 		if i == m.menu.cursor {
-			st = st.Background(colSelBg).Bold(true)
+			st = lipgloss.NewStyle().Foreground(colSelFg).Background(colSelBg).Bold(true)
 		}
 		out = append(out, border.Render("│")+st.Render(label)+border.Render("│"))
 	}
@@ -1125,7 +1128,7 @@ func (m model) viewFooter() string {
 			what, text = "search log", m.logFilt.grep
 		}
 		return stSubtle.Render(what+" ") + stFilter.Render("/") + stBase.Render(text) +
-			lipgloss.NewStyle().Foreground(colMauve).Render("▏") +
+			lipgloss.NewStyle().Foreground(colMagenta).Render("▏") +
 			stFaint.Render("  enter=apply  esc=clear")
 	}
 	if m.toast != "" {

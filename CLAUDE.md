@@ -155,9 +155,15 @@ These are decisions, not accidents. Change them deliberately, not incidentally.
 - `layout()` is the single source of truth for which columns exist at a given
   width. `columnAt()` (click-to-sort) and `nextVisibleSort()` (`s`) both walk
   its output, so they cannot drift out of sync with what is drawn.
-- Colour carries meaning: `heat()` for magnitudes, `stateColor()` for state.
-  Both light and dark terminals are supported via `lipgloss.AdaptiveColor` —
-  don't hardcode a colour.
+- **The palette is the terminal's own sixteen ANSI colours**, as htop's is.
+  Naming a colour by index means it is whatever the user's theme says, so
+  unitop matches the rest of their terminal and needs no light/dark handling.
+  Never write a hex value or a 256-colour index: it would override the theme
+  and force the light/dark problem back in. Six hues carry meaning — green
+  healthy, yellow watch, red wrong, cyan finished-or-rate, blue keys, magenta
+  headings — everything else is grey or dim. Colour comes from `heat()` for
+  magnitudes and `stateColor()` for state; a test asserts the state colours
+  stay inside the palette.
 
 **Talking to systemd**
 

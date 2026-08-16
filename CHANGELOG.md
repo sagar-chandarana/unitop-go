@@ -36,6 +36,14 @@ to change.
 
 ### Changed
 
+- **Colours are now the terminal's own sixteen**, as htop's are, instead of a
+  fixed palette of hex values. unitop matches whatever theme you run rather
+  than imposing one, and the light/dark handling it used to need is gone. Six
+  hues carry meaning — green healthy, yellow watch, red wrong, cyan
+  finished-or-rate, blue keys, magenta headings — and everything else is grey
+  or dim. The selected row is black on cyan, as htop draws it.
+- The footer keeps `q quit` at every width. It used to drop hints from the end,
+  which took how-to-quit before anything else.
 - The side pane grows its detail block on a tall terminal and shrinks it on a
   short one, giving ground to the log first.
 

@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // Every case below is a real (ActiveState, SubState, Result, ExecMainCode,
 // ExecMainStatus, ConditionResult) tuple observed on a live host. systemd
@@ -115,8 +119,21 @@ func TestStateColorSeparatesInactiveCases(t *testing.T) {
 	if stateColor(running) != colGreen {
 		t.Error("a running unit should be green")
 	}
-	if stateColor(skipped) != colFaint {
+	if stateColor(skipped) != colGrey {
 		t.Error("a skipped unit should be the quietest")
+	}
+	// Six hues carry meaning; anything else would be decoration.
+	seen := map[lipgloss.TerminalColor]bool{}
+	for _, u := range []Unit{finished, never, skipped, failed, running,
+		{Active: "active", Sub: "exited"}, {Active: "activating", Sub: "start"}} {
+		seen[stateColor(u)] = true
+	}
+	for c := range seen {
+		switch c {
+		case colRed, colGreen, colYellow, colCyan, colGrey:
+		default:
+			t.Errorf("state colouring reached outside the palette: %v", c)
+		}
 	}
 }
 

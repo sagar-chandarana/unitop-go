@@ -2,54 +2,60 @@ package main
 
 import "github.com/charmbracelet/lipgloss"
 
-// Catppuccin-derived palette, adaptive so the TUI stays legible on light and
-// dark terminals alike. Dark value first, light value second.
+// The palette is the terminal's own sixteen ANSI colours, as htop uses. Naming
+// a colour by index rather than by hex means it is whatever the user's theme
+// says it is, so unitop matches the rest of their terminal and needs no
+// light/dark handling of its own. Six hues carry meaning and nothing else is
+// coloured:
+//
+//	green   healthy, running
+//	yellow  in transition, or a number worth watching
+//	red     failed, or a number that is too high
+//	cyan    finished cleanly, and rates
+//	blue    keys and interactive hints
+//	magenta headings and the selected sort
+//
+// Anything that is merely context is grey, and anything below notice is dim.
 var (
-	colText    = lipgloss.AdaptiveColor{Dark: "#cdd6f4", Light: "#4c4f69"}
-	colSubtle  = lipgloss.AdaptiveColor{Dark: "#6c7086", Light: "#9ca0b0"}
-	colFaint   = lipgloss.AdaptiveColor{Dark: "#45475a", Light: "#bcc0cc"}
-	colGreen   = lipgloss.AdaptiveColor{Dark: "#a6e3a1", Light: "#40a02b"}
-	colYellow  = lipgloss.AdaptiveColor{Dark: "#f9e2af", Light: "#df8e1d"}
-	colPeach   = lipgloss.AdaptiveColor{Dark: "#fab387", Light: "#fe640b"}
-	colRed     = lipgloss.AdaptiveColor{Dark: "#f38ba8", Light: "#d20f39"}
-	colMauve   = lipgloss.AdaptiveColor{Dark: "#cba6f7", Light: "#8839ef"}
-	colBlue    = lipgloss.AdaptiveColor{Dark: "#89b4fa", Light: "#1e66f5"}
-	colTeal    = lipgloss.AdaptiveColor{Dark: "#94e2d5", Light: "#179299"}
-	colSelBg   = lipgloss.AdaptiveColor{Dark: "#313244", Light: "#dce0e8"}
-	colPanelBd = lipgloss.AdaptiveColor{Dark: "#45475a", Light: "#ccd0da"}
+	colDefault = lipgloss.NoColor{}  // the terminal's own foreground
+	colGrey    = lipgloss.Color("8") // bright black: present but secondary
+	colRed     = lipgloss.Color("1") //
+	colGreen   = lipgloss.Color("2") //
+	colYellow  = lipgloss.Color("3") //
+	colBlue    = lipgloss.Color("4") //
+	colMagenta = lipgloss.Color("5") //
+	colCyan    = lipgloss.Color("6") //
+	colSelBg   = lipgloss.Color("6") // the selected row: black on cyan, as htop
+	colSelFg   = lipgloss.Color("0") // the selected row's text, against that
 )
 
 var (
-	stBase    = lipgloss.NewStyle().Foreground(colText)
-	stSubtle  = lipgloss.NewStyle().Foreground(colSubtle)
-	stFaint   = lipgloss.NewStyle().Foreground(colFaint)
-	stHeader  = lipgloss.NewStyle().Foreground(colMauve).Bold(true)
-	stColHead = lipgloss.NewStyle().Foreground(colSubtle).Bold(true)
-	stSortCol = lipgloss.NewStyle().Foreground(colMauve).Bold(true).Underline(true)
-	stAccent  = lipgloss.NewStyle().Foreground(colTeal)
+	stBase    = lipgloss.NewStyle()
+	stSubtle  = lipgloss.NewStyle().Foreground(colGrey)
+	stFaint   = lipgloss.NewStyle().Foreground(colGrey).Faint(true)
+	stHeader  = lipgloss.NewStyle().Foreground(colMagenta).Bold(true)
+	stColHead = lipgloss.NewStyle().Bold(true)
+	stSortCol = lipgloss.NewStyle().Foreground(colMagenta).Bold(true)
+	stAccent  = lipgloss.NewStyle().Foreground(colCyan)
 	stKey     = lipgloss.NewStyle().Foreground(colBlue)
 	stBad     = lipgloss.NewStyle().Foreground(colRed).Bold(true)
 	stWarn    = lipgloss.NewStyle().Foreground(colYellow)
 	stGood    = lipgloss.NewStyle().Foreground(colGreen)
-	stSel     = lipgloss.NewStyle().Background(colSelBg).Bold(true)
-	stBorder  = lipgloss.NewStyle().Foreground(colPanelBd)
-	stFilter  = lipgloss.NewStyle().Foreground(colPeach).Bold(true)
+	stBorder  = lipgloss.NewStyle().Foreground(colGrey).Faint(true)
+	stFilter  = lipgloss.NewStyle().Foreground(colYellow).Bold(true)
 )
 
-// heat maps a magnitude onto the palette: quiet things stay out of the way,
-// busy things escalate green -> yellow -> peach -> red.
-func heat(v float64, t1, t2, t3, t4 float64) lipgloss.AdaptiveColor {
+// heat maps a magnitude onto four steps — dim, green, yellow, red. quiet is
+// the value below which something is not worth looking at, warn where it
+// starts to matter, and high where it is a problem.
+func heat(v, quiet, warn, high float64) lipgloss.TerminalColor {
 	switch {
-	case v <= 0:
-		return colFaint
-	case v < t1:
-		return colSubtle
-	case v < t2:
+	case v < quiet:
+		return colGrey
+	case v < warn:
 		return colGreen
-	case v < t3:
+	case v < high:
 		return colYellow
-	case v < t4:
-		return colPeach
 	default:
 		return colRed
 	}
@@ -57,8 +63,8 @@ func heat(v float64, t1, t2, t3, t4 float64) lipgloss.AdaptiveColor {
 
 // stateColor picks a colour for a unit's state. Among the inactive units it
 // separates the three cases that systemd renders identically as dead: ran and
-// finished (quiet), skipped (quieter still), and never ran.
-func stateColor(u Unit) lipgloss.AdaptiveColor {
+// finished (grey), skipped (dimmer still), and never ran.
+func stateColor(u Unit) lipgloss.TerminalColor {
 	switch u.Active {
 	case "failed":
 		return colRed
@@ -66,40 +72,40 @@ func stateColor(u Unit) lipgloss.AdaptiveColor {
 		return colYellow
 	case "active":
 		if u.Sub == "exited" {
-			return colTeal
+			return colCyan
 		}
 		return colGreen
 	case "inactive":
 		switch {
 		case u.Skipped():
-			return colFaint
+			return colGrey
 		case u.Result != "" && u.Result != "success":
-			return colPeach
+			return colYellow
 		case u.ExecCode == execExited && u.ExecStatus != 0:
-			return colPeach
+			return colYellow
 		case u.Ran():
-			return colSubtle
+			return colCyan
 		}
-		return colFaint // never ran
+		return colGrey
 	default:
-		return colSubtle
+		return colGrey
 	}
 }
 
-// prioColor maps a syslog priority to a colour for the log pane.
-func prioColor(p int) lipgloss.AdaptiveColor {
+// prioColor maps a syslog priority to a colour for the log pane. Only the
+// levels worth reacting to are coloured; ordinary output stays the terminal's
+// own foreground, as a pager would leave it.
+func prioColor(p int) lipgloss.TerminalColor {
 	switch {
-	case p <= 2: // emerg, alert, crit
-		return colRed
-	case p == 3: // err
+	case p <= 3: // emerg, alert, crit, err
 		return colRed
 	case p == 4: // warning
 		return colYellow
 	case p == 5: // notice
-		return colTeal
+		return colCyan
 	case p == 6: // info
-		return colText
+		return colDefault
 	default: // debug and below
-		return colSubtle
+		return colGrey
 	}
 }
