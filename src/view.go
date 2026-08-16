@@ -172,6 +172,17 @@ func (m model) View() string {
 	if m.menu.open {
 		lines = m.overlayMenu(lines)
 	}
+
+	// Start every styled line from a clean slate. Each line we compose is
+	// already balanced, but the trailing reset does not always survive the
+	// renderer, and one bold error line in the log pane then bleeds bold into
+	// the row beneath it. Resetting up front makes a line's appearance depend
+	// on nothing but itself.
+	for i, l := range lines {
+		if strings.Contains(l, "\x1b[") {
+			lines[i] = "\x1b[0m" + l
+		}
+	}
 	return strings.Join(lines, "\n")
 }
 

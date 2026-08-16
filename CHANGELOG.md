@@ -8,6 +8,14 @@ to change.
 
 ## [Unreleased]
 
+### Fixed
+
+- Rows in the table no longer turn bold at random. An error-priority line in
+  the log pane is rendered bold, and the attribute was bleeding into the row
+  drawn beneath it — so which units looked bold depended on which unit was
+  selected and what its journal happened to contain. Every styled line now
+  starts with a reset, so a line depends on nothing but itself.
+
 ## [0.2.0] — 2026-08-16
 
 ### Added
