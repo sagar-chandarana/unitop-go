@@ -10,7 +10,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-const paneGap = 3 // " │ "
+// paneGap is what sits between the two panes contents: each pane's own border
+// and the column of air inside it, twice over, plus a column between the boxes.
+const paneGap = 9
 
 type colDef struct {
 	key   sortKey
@@ -50,10 +52,16 @@ func (m model) contentHeight() int {
 	return max(1, m.height-m.headerLines()-1)
 }
 
-// listRows is the number of unit rows on screen: content minus the column
-// titles and the rule under them.
-func (m model) listRows() int {
+// paneInner is the height inside a pane's box: the content area minus the
+// framing lines above and below it.
+func (m model) paneInner() int {
 	return max(1, m.contentHeight()-2)
+}
+
+// listRows is the number of unit rows on screen: the pane's inside, minus the
+// column titles and the rule under them.
+func (m model) listRows() int {
+	return max(1, m.paneInner()-2)
 }
 
 // detailLines is how much of the unit description fits above the log. The full
@@ -77,7 +85,7 @@ func (m model) detailLines() int {
 func (m model) detailHeight() int { return m.detailLines() + 1 }
 
 func (m model) logHeight() int {
-	return max(1, m.contentHeight()-m.detailHeight())
+	return max(1, m.paneInner()-m.detailHeight())
 }
 
 func (m model) logPaneVisible() bool {
@@ -95,7 +103,7 @@ func (m model) logPaneWidth() int {
 		return 0
 	}
 	if m.fullView {
-		return m.width
+		return max(10, m.width-4) // the whole screen, less its own box
 	}
 	return max(36, m.width*42/100)
 }
@@ -105,9 +113,9 @@ func (m model) tableWidth() int {
 		return 0
 	}
 	if !m.logPaneVisible() {
-		return m.width
+		return max(10, m.width-4)
 	}
-	return m.width - m.logPaneWidth() - paneGap
+	return max(10, m.width-m.logPaneWidth()-paneGap)
 }
 
 func (m model) logInnerWidth() int {
@@ -448,40 +456,113 @@ func (m model) viewHost() []string {
 // ---------- body ----------
 
 func (m model) viewBody() []string {
-	h := m.contentHeight()
+	inner := m.paneInner()
+	logFocused := m.focus == focusLogs && m.logPaneVisible()
+
 	var left, right []string
-	if tw := m.tableWidth(); tw > 0 {
-		left = m.viewTable(tw, h)
+	if tw := m.tableWidth(); tw > 0 && !m.fullView {
+		left = framed(m.viewTable(tw, inner), tw, inner, m.tableTitle(tw), !logFocused)
 	}
 	if m.logPaneVisible() {
-		right = m.viewLogPane(m.logPaneWidth(), h)
+		lw := m.logPaneWidth()
+		right = framed(m.viewLogPane(lw, inner), lw, inner, m.logTitle(lw), logFocused)
 	}
 
-	lines := make([]string, h)
-	for i := 0; i < h; i++ {
+	lines := make([]string, inner+2)
+	for i := range lines {
 		var row string
 		if len(left) > 0 {
-			cell := ""
-			if i < len(left) {
-				cell = left[i]
+			row = left[i]
+			if len(right) > 0 {
+				row += " " // the boxes do not touch
 			}
-			row = cell + strings.Repeat(" ", max(0, m.tableWidth()-lipgloss.Width(cell)))
 		}
 		if len(right) > 0 {
-			if len(left) > 0 {
-				if m.focus == focusLogs {
-					row += " " + lipgloss.NewStyle().Foreground(colMagenta).Render("┃") + " "
-				} else {
-					row += " " + stBorder.Render("│") + " "
-				}
-			}
-			if i < len(right) {
-				row += right[i]
-			}
+			row += right[i]
 		}
 		lines[i] = row
 	}
 	return lines
+}
+
+// framed draws a pane's box. Both panes are always boxed and always the same
+// size, so focus moves without the layout shifting under it; the focused box is
+// heavy and coloured and the other light and faint, which reads at a glance and
+// still reads on a terminal with no colour. The title lives in the top edge,
+// where it can also say what is filtering the pane.
+func framed(body []string, w, h int, title string, focused bool) []string {
+	tl, tr, bl, br, hz, edge := "╭", "╮", "╰", "╯", "─", "│"
+	st := stBorder
+	if focused {
+		tl, tr, bl, br, hz, edge = "┏", "┓", "┗", "┛", "━", "┃"
+		st = lipgloss.NewStyle().Foreground(colMagenta)
+	}
+
+	head, used := st.Render(tl+hz), 2
+	if t := truncANSI(title, max(0, w-4)); t != "" {
+		head += " " + t + " "
+		used += lipgloss.Width(t) + 2
+	}
+	head += st.Render(strings.Repeat(hz, max(0, w-used+3)) + tr)
+
+	out := make([]string, 0, h+2)
+	out = append(out, head)
+	for i := 0; i < h; i++ {
+		cell := ""
+		if i < len(body) {
+			cell = truncANSI(body[i], w)
+		}
+		out = append(out, st.Render(edge)+" "+cell+
+			strings.Repeat(" ", max(0, w-lipgloss.Width(cell)))+" "+st.Render(edge))
+	}
+	return append(out, st.Render(bl+strings.Repeat(hz, w+2)+br))
+}
+
+// tableTitle names the pane and says plainly what the filter is doing to it. A
+// filtered table otherwise looks like a machine with very few services on it.
+// The wording gives ground as the pane narrows rather than being cut off
+// mid-sentence, which says less than the short form would have.
+func (m model) tableTitle(width int) string {
+	shown := 0
+	for _, r := range m.rows {
+		if r.kind == rowUnit {
+			shown++
+		}
+	}
+	head := stColHead.Render("units ") + stBase.Render(strconv.Itoa(shown))
+	if shown != len(m.units) {
+		head += stSubtle.Render(" of " + strconv.Itoa(len(m.units)))
+	}
+	if m.filter == "" {
+		return head
+	}
+	q := strconv.Quote(m.filter)
+	return fitTitle(head, width, "name or description contains "+q, "matching "+q, "filtered")
+}
+
+// logTitle names the unit whose journal is on screen, and what has been left
+// out of it.
+func (m model) logTitle(width int) string {
+	head := stColHead.Render("log")
+	if u, ok := m.selectedUnit(); ok {
+		head += " " + stBase.Render(shortUnit(u.Name))
+	}
+	if m.logFilt.empty() {
+		return head
+	}
+	return fitTitle(head, width, m.logFilt.label(), "filtered")
+}
+
+// fitTitle appends the longest of the given descriptions that still fits in the
+// pane's top edge, and the shortest if none of them do.
+func fitTitle(head string, width int, alts ...string) string {
+	for i, alt := range alts {
+		t := head + stFaint.Render(" · ") + stFilter.Render(alt)
+		if lipgloss.Width(t) <= width-4 || i == len(alts)-1 {
+			return t
+		}
+	}
+	return head
 }
 
 // layout drops the lowest-priority columns until the table fits, then hands
@@ -750,10 +831,6 @@ func (m model) unitDetail(u Unit, width int) []string {
 	title := lipgloss.NewStyle().Foreground(stateColor(u)).Bold(true).
 		Render(truncRunes(shortUnit(u.Name), max(1, width/2)))
 	title += "  " + stateText(u)
-	// A filtered log looks like a quiet one unless it says so.
-	if !m.logFilt.empty() {
-		title += "  " + stFilter.Render(m.logFilt.label())
-	}
 
 	// Wide enough, the lifecycle facts sit opposite the name; in a narrow pane
 	// hjoin would drop them entirely, so they get a line of their own.
@@ -939,7 +1016,7 @@ func (m model) renderLogWindow(width, height int) []string {
 
 	// The bottom line says how far behind the live end you are.
 	if m.logScroll > 0 {
-		marker := stWarn.Render(fmt.Sprintf("── paused, %d lines below (f or G to follow) ──", m.logScroll))
+		marker := stWarn.Render(fmt.Sprintf("── paused, %d lines below (f or end to follow) ──", m.logScroll))
 		win[len(win)-1] = truncANSI(marker, width)
 	}
 	// The top line says where this buffer came from, so its first entry is
@@ -1132,15 +1209,53 @@ func (m model) confirmBox() []string {
 
 // ---------- footer & help ----------
 
+// footerKeys lists what works from where the focus is, and nothing else. The
+// keys that belong to the other pane are inert (see keyApplies), so offering
+// them would be a lie about what the next keystroke does.
+func (m model) footerKeys() [][2]string {
+	keys := [][2]string{{"↑↓", "move"}}
+	if m.fullView {
+		keys = append(keys, [2]string{"enter/esc", "back"})
+	} else {
+		keys = append(keys, [2]string{"enter", "full view"})
+	}
+	keys = append(keys, [2]string{"x", "actions"})
+
+	if m.focus == focusLogs && m.logPaneVisible() {
+		keys = append(keys,
+			[2]string{"/", "search log"},
+			[2]string{"e", "level"},
+			[2]string{"f", "follow"},
+			[2]string{"w", "wrap"})
+	} else {
+		keys = append(keys,
+			[2]string{"/", "filter units"},
+			[2]string{"s", "sort"},
+			[2]string{"r", "rev"},
+			[2]string{"t", "tree"},
+			[2]string{"a", "all"})
+	}
+
+	if !m.fullView {
+		if m.logPaneVisible() {
+			keys = append(keys, [2]string{"tab", "focus"})
+		}
+		keys = append(keys, [2]string{"l", "log"})
+	}
+	return append(keys, [2]string{"?", "help"}, [2]string{"q", "quit"})
+}
+
 func (m model) viewFooter() string {
 	if m.filterInput {
-		what, text := "filter units", m.filter
+		// Say what the text will do, not which pane it belongs to: the two
+		// filters do genuinely different things and neither is guessable.
+		what, text := "show units whose name or description contains", m.filter
 		if m.filterLogs {
-			what, text = "search log", m.logFilt.grep
+			what, text = "show journal lines matching", m.logFilt.grep
 		}
-		return stSubtle.Render(what+" ") + stFilter.Render("/") + stBase.Render(text) +
+		return stSubtle.Render(what+" ") + stFilter.Render(text) +
 			lipgloss.NewStyle().Foreground(colMagenta).Render("▏") +
-			stFaint.Render("  enter=apply  esc=clear")
+			stFaint.Render("  enter apply · esc clear")
 	}
 	if m.toast != "" {
 		st, mark := stGood, "✓ "
@@ -1153,25 +1268,7 @@ func (m model) viewFooter() string {
 		return truncANSI(stBad.Render("! ")+lipgloss.NewStyle().Foreground(colRed).Render(m.err), m.width)
 	}
 
-	keys := [][2]string{
-		{"↑↓", "move"}, {"enter", "full view"}, {"x", "actions"}, {"tab", "focus"},
-		{"s", "sort"}, {"r", "rev"}, {"t", "tree"}, {"/", "filter"}, {"a", "all"},
-		{"f", "follow"}, {"e", "level"}, {"l", "log"}, {"?", "help"}, {"q", "quit"},
-	}
-	if m.fullView {
-		keys[1] = [2]string{"enter/esc", "back"}
-		// In the full view "/" searches the log, not the table.
-		for i := range keys {
-			if keys[i][0] == "/" {
-				keys[i][1] = "search"
-			}
-		}
-		// Offer only what actually does something without a table on screen.
-		keys = slices.DeleteFunc(keys, func(k [2]string) bool {
-			return k[0] == "l" || tableOnlyKeys[k[0]]
-		})
-		keys = slices.Insert(keys, len(keys)-2, [2]string{"w", "wrap"})
-	}
+	keys := m.footerKeys()
 	// Fit whole hints, dropping the ones that do not fit. Cutting the line at
 	// the width instead would leave a half-written key, which reads as a
 	// rendering fault rather than a narrow terminal.
@@ -1215,48 +1312,94 @@ func (m model) viewFooter() string {
 	return line + sep + quit
 }
 
+// viewHelp groups the keys by the pane they belong to, because that is how
+// they behave: the focused pane, drawn in a heavy box, is the one taking them.
 func (m model) viewHelp() []string {
 	rows := [][2]string{
-		{"↑ ↓", "move selection (or scroll logs when focused)"},
+		{"", "— either pane —"},
+		{"↑ ↓", "move the selection, or scroll the log when it has focus"},
 		{"pgup/pgdn", "page"},
 		{"F / end", "top / bottom (home works too)"},
-		{"← →", "collapse / expand a slice in tree mode"},
-		{"tab", "switch focus between the unit list and the log pane"},
+		{"tab", "move focus between the unit list and the log"},
 		{"enter", "on a unit: full view (esc returns); on a slice: expand/collapse"},
 		{"x", "start / stop / restart / kill the selected unit"},
+		{"", ""},
+		{"", "— the unit list —"},
+		{"/", "show only units whose name or description contains the text"},
 		{"s / S", "sort by the next / previous visible column"},
 		{"r", "reverse the sort"},
+		{"t", "tree view, grouped by slice"},
+		{"a", "include inactive/dead units"},
+		{"← →", "collapse / expand a slice in tree mode"},
 		{"click", "on a column header sorts by it; again reverses"},
 		{"right-click", "on a unit opens start/stop/restart/kill"},
-		{"t", "tree view, grouped by slice"},
-		{"/", "filter: the table, or the log when it has focus (esc clears)"},
-		{"e", "log level: everything, warning and above, error and above"},
-		{"a", "include inactive/dead units"},
-		{"f", "follow the log (auto-scroll); scrolling up turns it off"},
+		{"", ""},
+		{"", "— the log —"},
+		{"/", "show only journal lines matching the text (a journalctl regex)"},
+		{"e", "level: everything, warning and above, error and above"},
+		{"f", "follow (auto-scroll); scrolling up turns it off"},
+		{"w", "wrap long lines"},
 		{"", "scrolling to the top loads the previous 500 journal entries"},
-		{"l", "toggle the log pane (no effect in the full view)"},
-		{"w", "toggle log wrapping"},
+		{"", ""},
+		{"", "— anywhere —"},
+		{"l", "show or hide the log pane"},
 		{"p", "pause polling"},
 		{"R", "refresh now"},
 		{"+ / -", "faster / slower refresh"},
 		{"q", "quit"},
 	}
-	out := []string{stHeader.Render("unitop — keys"), ""}
+	body := make([]string, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, "  "+stKey.Render(padLeft(r[0], 11))+"  "+stBase.Render(r[1]))
+		switch {
+		case r[1] == "":
+			body = append(body, "")
+		case strings.HasPrefix(r[1], "—"):
+			body = append(body, "  "+stHeader.Render(r[1]))
+		default:
+			body = append(body, "  "+stKey.Render(padLeft(r[0], 11))+"  "+stBase.Render(r[1]))
+		}
 	}
-	out = append(out, "",
-		stSubtle.Render("  Sorting, filtering, tree and focus act on the table, so the full view ignores them."),
+	notes := []string{"",
+		stSubtle.Render("  A key belonging to the other pane does nothing; the footer lists only what applies."),
 		stSubtle.Render("  CPU%, NET and IO are rates between polls; MEM is the current cgroup total."),
 		stSubtle.Render("  NET needs IPAccounting=yes on the unit (or DefaultIPAccounting=yes system-wide)."),
 		stSubtle.Render("  Reading logs needs membership of systemd-journal, or root."),
 		stSubtle.Render("  Unit actions need privilege: run as root, or pass -sudo for sudo -n."),
-	)
+	}
+
+	out := []string{stHeader.Render("unitop — keys"), ""}
 	h := m.contentHeight()
+	// The keys come first and whole: the notes below them are worth losing to a
+	// short terminal, but cutting the key list would take the last group off the
+	// bottom, and that is where quit lives. Two columns buy the room to keep it.
+	if len(out)+len(body) > h && m.width >= 110 {
+		half := (len(body) + 1) / 2
+		for i := 0; i < half; i++ {
+			right := ""
+			if j := i + half; j < len(body) {
+				right = body[j]
+			}
+			out = append(out, sideBySide(m.width/2, body[i], right))
+		}
+	} else {
+		out = append(out, body...)
+	}
+	for _, n := range notes {
+		if len(out) >= h {
+			break
+		}
+		out = append(out, n)
+	}
 	for len(out) < h {
 		out = append(out, "")
 	}
 	return out[:h]
+}
+
+// sideBySide places b at column w, cutting a if it would reach that far.
+func sideBySide(w int, a, b string) string {
+	a = truncANSI(a, w-1)
+	return a + strings.Repeat(" ", max(1, w-lipgloss.Width(a))) + b
 }
 
 // truncANSI cuts a styled string to w visible columns.

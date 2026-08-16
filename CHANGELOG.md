@@ -8,7 +8,29 @@ to change.
 
 ## [Unreleased]
 
+### Added
+
+- Each pane is drawn in its own box, and the focused one's is heavy and
+  coloured. Focus used to be a single character on the divider between them,
+  which is not where you are looking. Both boxes are always there, so moving
+  focus does not shift the layout.
+- Each box's title says what its filter is doing, in words: `units 12 of 340 ·
+  name or description contains "nginx"`, `log nginx.service · matching
+  "denied", error and above`. A filtered pane that did not say so reads as a
+  quiet one.
+
 ### Changed
+
+- Keys belong to the pane they act on. With the log focused, `s` `S` `r` `t`
+  `a` do nothing; with the table focused, `f` `e` `w` do nothing. The footer
+  lists only the keys that apply where you are, so what is on screen is what
+  the next keystroke will do — `s` used to resort the table silently behind a
+  log you were reading.
+- The `/` prompt says what the text will do rather than which pane owns it:
+  "show units whose name or description contains", or "show journal lines
+  matching".
+- The help screen is grouped by pane, and sets itself in two columns rather
+  than losing its last group off the bottom of a short terminal.
 
 - One motion, one key. Movement is the arrows, `pgup`/`pgdn`, `F` or `home`
   for the top and `end` for the bottom — in the table, the log and the action
@@ -24,6 +46,8 @@ to change.
 
 ### Fixed
 
+- The action popup stays inside the pane it belongs to instead of overrunning
+  the bottom of the list onto the footer.
 - Rows in the table no longer turn bold at random. An error-priority line in
   the log pane is rendered bold, and the attribute was bleeding into the row
   drawn beneath it — so which units looked bold depended on which unit was

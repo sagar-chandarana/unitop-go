@@ -380,8 +380,9 @@ func TestEnterTogglesFullView(t *testing.T) {
 	if strings.Contains(out, "UNIT ") {
 		t.Error("full view should hide the table")
 	}
-	if m.logPaneWidth() != m.width {
-		t.Errorf("log pane is %d wide, want the full %d", m.logPaneWidth(), m.width)
+	// The whole screen bar the pane's own box.
+	if m.logPaneWidth() != m.width-4 {
+		t.Errorf("log pane is %d wide, want %d", m.logPaneWidth(), m.width-4)
 	}
 	// The live counters must survive the loss of the table.
 	for _, want := range []string{"cpu", "mem", "net", "12.5%", "40M", "pid 42", "restarts 1"} {
@@ -466,7 +467,8 @@ func TestEnterOnSliceDoesNotOpenFullView(t *testing.T) {
 
 var allFooterHints = []string{
 	"↑↓ move", "enter full view", "enter/esc back", "x actions", "tab focus",
-	"s sort", "r rev", "t tree", "/ filter", "a all", "f follow", "f follow off",
+	"s sort", "r rev", "t tree", "/ filter units", "/ search log", "a all",
+	"f follow", "f follow off",
 	"e level", "w wrap", "l log", "? help", "q quit",
 }
 
@@ -534,18 +536,21 @@ func TestRowAtMatchesRenderedRows(t *testing.T) {
 	m.units = testUnits()
 	m.rebuild()
 
-	first := m.headerLines() + 2
+	first := m.headerLines() + 3
 	for i := range m.rows {
 		got, ok := m.rowAt(first + i)
 		if !ok || got != i {
 			t.Fatalf("rowAt(%d) = %d/%v, want %d", first+i, got, ok, i)
 		}
 	}
-	if _, ok := m.rowAt(m.headerLines()); ok {
-		t.Error("the column-title line is not a row")
-	}
-	if _, ok := m.rowAt(m.headerLines() + 1); ok {
-		t.Error("the rule under the titles is not a row")
+	for off, what := range map[int]string{
+		0: "the pane's top border",
+		1: "the column-title line",
+		2: "the rule under the titles",
+	} {
+		if _, ok := m.rowAt(m.headerLines() + off); ok {
+			t.Errorf("%s is not a row", what)
+		}
 	}
 }
 
@@ -675,20 +680,20 @@ func TestScrollingToTheBottomResumesFollowing(t *testing.T) {
 		t.Fatal("paging up should stop following")
 	}
 	for i := 0; i < 500 && m.logScroll > 0; i++ {
-		m.handleMouse(tea.MouseMsg{Button: tea.MouseButtonWheelDown, X: m.tableWidth() + 1})
+		m.handleMouse(tea.MouseMsg{Button: tea.MouseButtonWheelDown, X: m.tableWidth() + 4})
 	}
 	if !m.logFollow {
 		t.Error("wheeling to the bottom did not resume following")
 	}
 
-	// G jumps to the end and follows; g goes to the top and does not.
-	m.logKey("home")
+	// F jumps to the top and stops following; end returns to the live end.
+	m.logKey("F")
 	if m.logFollow || m.logScroll == 0 {
-		t.Errorf("g should go to the top and stop following: follow=%v scroll=%d", m.logFollow, m.logScroll)
+		t.Errorf("F should go to the top and stop following: follow=%v scroll=%d", m.logFollow, m.logScroll)
 	}
 	m.logKey("end")
 	if !m.logFollow || m.logScroll != 0 {
-		t.Errorf("G should return to the live end: follow=%v scroll=%d", m.logFollow, m.logScroll)
+		t.Errorf("end should return to the live end: follow=%v scroll=%d", m.logFollow, m.logScroll)
 	}
 
 	// A log shorter than the pane has nowhere to scroll, so follow stays on.

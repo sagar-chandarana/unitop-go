@@ -44,19 +44,22 @@ func (f logFilter) args() []string {
 
 func (f logFilter) empty() bool { return f.grep == "" && f.prio == 0 }
 
-// label describes the filter for the pane header.
+// label describes the filter for the pane header. It says what is being left
+// out rather than naming the flags: a filtered log otherwise looks like a quiet
+// one, and "-g nginx -p 4" does not explain itself to someone who did not type
+// it.
 func (f logFilter) label() string {
 	var parts []string
 	if f.grep != "" {
-		parts = append(parts, "/"+f.grep)
+		parts = append(parts, "matching "+strconv.Quote(f.grep))
 	}
 	switch f.prio {
 	case 4:
-		parts = append(parts, "warning+")
+		parts = append(parts, "warning and above")
 	case 3:
-		parts = append(parts, "error+")
+		parts = append(parts, "error and above")
 	}
-	return strings.Join(parts, " ")
+	return strings.Join(parts, ", ")
 }
 
 // nextPriority cycles everything → warning and above → error and above.

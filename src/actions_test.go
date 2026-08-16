@@ -121,15 +121,18 @@ func TestReadOnlyBlocksTheMenu(t *testing.T) {
 	}
 }
 
-func TestMenuStaysOnScreen(t *testing.T) {
+// The popup stays inside the pane's box. Overrunning it breaks the outline and
+// lands on the footer, which reads as a rendering fault rather than as a popup.
+func TestMenuStaysInsideThePane(t *testing.T) {
 	m := actionModel(t)
 	m.openMenu("nginx.service", m.width-2, m.height-2)
-	w := menuWidth("nginx.service")
-	if m.menu.x+w > m.width {
-		t.Errorf("menu runs off the right edge: x=%d w=%d width=%d", m.menu.x, w, m.width)
+	w, h := menuWidth("nginx.service"), len(unitActions)+2
+	if m.menu.x < 1 || m.menu.x+w > m.width-1 {
+		t.Errorf("menu crosses a side border: x=%d w=%d width=%d", m.menu.x, w, m.width)
 	}
-	if m.menu.y+len(unitActions)+2 > m.height {
-		t.Errorf("menu runs off the bottom: y=%d height=%d", m.menu.y, m.height)
+	top, bottom := m.headerLines()+1, m.headerLines()+1+m.paneInner()
+	if m.menu.y < top || m.menu.y+h > bottom {
+		t.Errorf("menu runs outside rows %d..%d: y=%d h=%d", top, bottom, m.menu.y, h)
 	}
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,9 @@ func TestLogFilterArgs(t *testing.T) {
 	if (logFilter{prio: 4}).empty() || (logFilter{grep: "x"}).empty() {
 		t.Error("either half makes it non-empty")
 	}
-	if got := (logFilter{grep: "boom", prio: 4}).label(); got != "/boom warning+" {
+	// The label says what is being left out, in words — the flags that do it
+	// explain nothing to someone who did not type them.
+	if got := (logFilter{grep: "boom", prio: 4}).label(); got != `matching "boom", warning and above` {
 		t.Errorf("label = %q", got)
 	}
 }
@@ -122,8 +125,31 @@ func TestActiveLogFilterIsShown(t *testing.T) {
 	m.rebuild()
 	m.logFilt = logFilter{grep: "denied", prio: 3}
 
-	got := stripANSI(strings.Join(m.unitDetail(testUnits()[0], 140), "\n"))
-	if !strings.Contains(got, "/denied") || !strings.Contains(got, "error+") {
-		t.Errorf("the active filter is not shown in the detail block:\n%s", got)
+	// It rides in the log pane's own title, next to the unit it belongs to.
+	title := stripANSI(m.logTitle(80))
+	if !strings.Contains(title, `matching "denied"`) || !strings.Contains(title, "error and above") {
+		t.Errorf("the active filter is not shown in the log pane title: %q", title)
+	}
+	if !strings.Contains(stripANSI(m.View()), `matching "denied"`) {
+		t.Error("the active filter did not reach the screen")
+	}
+}
+
+// The same for the table: a filtered list has to say so, or it reads as a
+// machine with almost nothing running on it.
+func TestActiveUnitFilterIsShown(t *testing.T) {
+	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
+	m.width, m.height, m.ready = 140, 30, true
+	m.connected = true
+	m.units = testUnits()
+	m.filter = "ngin"
+	m.rebuild()
+
+	title := stripANSI(m.tableTitle(80))
+	if !strings.Contains(title, `name or description contains "ngin"`) {
+		t.Errorf("the unit filter is not shown in the table title: %q", title)
+	}
+	if !strings.Contains(title, "of "+strconv.Itoa(len(m.units))) {
+		t.Errorf("the title should say how many units were filtered out: %q", title)
 	}
 }

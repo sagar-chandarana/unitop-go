@@ -130,31 +130,55 @@ uptime`.
 
 ## Keys
 
+Most keys belong to a pane rather than to the program. The focused pane is
+drawn in a heavy, coloured box; `tab` moves between them. A key belonging to
+the other pane does nothing, and the footer lists only what applies where you
+are — so what is on screen is what the next keystroke will do.
+
+**Either pane**
+
 | key | action |
 | --- | --- |
-| `↑` `↓`, `pgup`/`pgdn`, `F`/`end` | move; scrolls the log when focused |
-| `←` `→` | collapse / expand a slice in tree view |
-| `tab` | switch focus between the table and the log |
+| `↑` `↓`, `pgup`/`pgdn`, `F`/`end` | move; scrolls the log when it has focus |
+| `tab` | move focus between the table and the log |
 | `enter` | full view for a unit (`esc` back); expand/collapse a slice |
 | `x` | start / stop / restart / kill the selected unit |
+
+**The unit list**
+
+| key | action |
+| --- | --- |
+| `/` | show only units whose name or description contains the text |
 | `s` / `S` | sort by the next / previous **visible** column |
 | `r` | reverse the sort |
 | `t` | tree view, grouped by slice |
-| `/` | filter: the table, or the log when it has focus (`esc` clears) |
-| `e` | log level: everything → warning and above → error and above |
 | `a` | include inactive/dead units |
-| `f` | follow the log; scrolling up turns it off |
-| `l` | toggle the log pane |
-| `w` | toggle log wrapping |
+| `←` `→` | collapse / expand a slice in tree view |
+
+**The log**
+
+| key | action |
+| --- | --- |
+| `/` | show only journal lines matching the text (a `journalctl` regex) |
+| `e` | level: everything → warning and above → error and above |
+| `f` | follow; scrolling up turns it off |
+| `w` | wrap long lines |
+
+**Anywhere**
+
+| key | action |
+| --- | --- |
+| `l` | show or hide the log pane |
 | `p` | pause polling |
 | `R` | refresh now |
 | `+` / `-` | faster / slower refresh |
 | `?` | help |
 | `q` | quit |
 
-Sorting, tree and pane focus (`s` `S` `r` `t` `a` `tab`) act on the table, so
-the full view ignores them and does not offer them. `/` follows the focus: it
-filters the table, or searches the log when that is what you are reading.
+Whatever a filter is doing sits in its pane's title, in words — `units 12 of
+340 · name or description contains "nginx"`, or `log nginx.service · matching
+"denied", error and above`. A filtered pane that did not say so would read as a
+quiet one. `esc` clears the filter of the pane you are in.
 
 The mouse works too: the wheel scrolls whichever pane it is over, a click on a
 **column header** sorts by it (again to reverse), a click on a slice's `▾`
@@ -214,8 +238,8 @@ entries. Switching units starts over.
 journalctl as `-g` and `-p`, so they search the **whole journal**, not just the
 entries already fetched — and the follow stream and the backwards paging both
 honour them. `-g` is a PCRE, case-insensitive while the pattern is lowercase.
-An active filter is shown beside the unit name, so a quiet log is never
-mistaken for a broken one.
+An active filter is named in the pane's title — `matching "denied", error and
+above` — so a quiet log is never mistaken for a broken one.
 
 ## What the columns mean
 

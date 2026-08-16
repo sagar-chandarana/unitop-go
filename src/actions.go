@@ -150,13 +150,17 @@ func (m *model) openMenu(unit string, x, y int) {
 		}
 		return
 	}
+	// Keep the popup inside the pane's box. Overrunning it breaks the outline
+	// and lands on the footer, which reads as a rendering fault rather than as
+	// a popup.
 	h := len(unitActions) + 2
 	w := menuWidth(unit)
-	if x+w > m.width {
-		x = max(0, m.width-w)
+	if x+w > m.width-1 {
+		x = max(1, m.width-1-w)
 	}
-	if y+h > m.height {
-		y = max(0, m.height-h)
+	top, bottom := m.headerLines()+1, m.headerLines()+1+m.paneInner()
+	if y+h > bottom {
+		y = max(top, bottom-h)
 	}
 	m.menu = ctxMenu{open: true, unit: unit, x: x, y: y}
 }

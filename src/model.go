@@ -25,16 +25,44 @@ const (
 	focusLogs
 )
 
-// tableOnlyKeys sort, group or move focus between panes — all of which act on
-// the unit table. In the full view there is no table to act on. `/` is not
-// here: it filters whichever pane has focus, so in the full view it filters
-// the log.
-var tableOnlyKeys = map[string]bool{
-	"s": true, "S": true, // sort column
-	"r":   true, // reverse
-	"t":   true, // tree
-	"a":   true, // include inactive
-	"tab": true,
+// Most keys belong to a pane rather than to the program, and a key that
+// belongs to the other pane does nothing and is not offered in the footer.
+// Pressing s while reading the log used to resort the table silently behind
+// it — the screen now says what will work, and only that works.
+//
+// `/` is in neither set: it filters whichever pane has focus. Nor is `x` or
+// `enter`, which act on the selected unit from either side.
+var (
+	tableKeys = map[string]bool{
+		"s": true, "S": true, // sort column
+		"r": true, // reverse
+		"t": true, // tree
+		"a": true, // include inactive
+	}
+	logKeys = map[string]bool{
+		"f": true, // follow
+		"e": true, // priority
+		"w": true, // wrap
+	}
+)
+
+// keyApplies reports whether a key does anything from where the focus is.
+func (m model) keyApplies(k string) bool {
+	switch {
+	case tableKeys[k]:
+		return !m.fullView && m.focus == focusList
+	case logKeys[k]:
+		return m.logPaneVisible() && m.focus == focusLogs
+	case k == "tab":
+		// Nothing to switch to: the full view has no table, and a hidden log
+		// pane is not somewhere focus can go.
+		return !m.fullView && m.logPaneVisible()
+	case k == "l":
+		// The full view is nothing but the log, so hiding it would leave an
+		// empty screen.
+		return !m.fullView
+	}
+	return true
 }
 
 type tickMsg time.Time
@@ -297,12 +325,6 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	// The full view has no table, so the keys that act on one do nothing there.
-	// They are not offered in the footer either.
-	if m.fullView && tableOnlyKeys[msg.String()] {
-		return m, nil
-	}
-
 	if m.filterInput {
 		// The same editor drives both filters; filterLogs says which one is
 		// being typed into.
@@ -344,6 +366,12 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.syncJournal()
 	}
 
+	// Checked after the filter editor, which takes every rune it is given: a
+	// pane's letters are commands only when nothing is being typed.
+	if !m.keyApplies(msg.String()) {
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "q", "ctrl+c":
 		m.journal.stop()
@@ -382,9 +410,6 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.help = false
 		return m, nil
 	case "e":
-		if !m.logPaneVisible() {
-			return m, nil
-		}
 		m.logFilt.prio = nextPriority(m.logFilt.prio)
 		return m, m.syncJournal()
 	case "s":
@@ -414,11 +439,6 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "l":
-		// The full view is nothing but the log, so hiding it would leave an
-		// empty screen. Ignore the key rather than acting on it.
-		if m.fullView {
-			return m, nil
-		}
 		m.showLogs = !m.showLogs
 		if !m.logPaneVisible() {
 			m.focus = focusList
@@ -465,9 +485,9 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // summary instead, in the same place every time.
 func (m model) menuAnchor() (int, int) {
 	if m.fullView {
-		return 4, m.headerLines() + m.detailHeight()
+		return 4, m.headerLines() + m.detailHeight() + 1
 	}
-	return 4, min(m.cursor-m.topRow+m.headerLines()+2, m.height-4)
+	return 4, min(m.cursor-m.topRow+m.headerLines()+3, m.height-4)
 }
 
 // activateRow is Enter: on a slice it expands or collapses; on a unit it opens
@@ -639,7 +659,9 @@ func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	overLogs := m.logPaneVisible() && (m.fullView || msg.X >= m.tableWidth())
+	// The table's box takes four columns of its own — two borders and the air
+	// inside them — so the log pane begins four past the table's content.
+	overLogs := m.logPaneVisible() && (m.fullView || msg.X >= m.tableWidth()+4)
 	switch msg.Button {
 	case tea.MouseButtonWheelUp:
 		if overLogs {
@@ -663,7 +685,7 @@ func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.focus = focusList
-		if msg.Y == m.headerLines() {
+		if msg.Y == m.headerLines()+1 { // host block, then the pane's top border
 			if k, ok := m.columnAt(msg.X); ok {
 				if k == m.sortBy {
 					m.reverse = !m.reverse
@@ -678,7 +700,7 @@ func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			m.cursor = row
 			cmd := m.afterCursorMove()
 			// A click on the twisty of a slice row toggles it, like a file tree.
-			if r, ok := m.selectedRow(); ok && r.kind == rowSlice && msg.X <= r.depth*2+1 {
+			if r, ok := m.selectedRow(); ok && r.kind == rowSlice && msg.X-2 <= r.depth*2+1 {
 				m.collapsed[r.slice] = !m.collapsed[r.slice]
 				m.rebuild()
 			}
@@ -703,7 +725,8 @@ func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 // rowAt maps a screen line onto an index in m.rows.
 func (m model) rowAt(y int) (int, bool) {
-	first := m.headerLines() + 2 // host block, then the column titles and their rule
+	// The host block, the pane's top border, the column titles and their rule.
+	first := m.headerLines() + 3
 	idx := m.topRow + y - first
 	if y < first || idx < 0 || idx >= len(m.rows) {
 		return 0, false
@@ -711,10 +734,11 @@ func (m model) rowAt(y int) (int, bool) {
 	return idx, true
 }
 
-// columnAt maps a screen column onto the sort key of the column under it.
+// columnAt maps a screen column onto the sort key of the column under it. The
+// table's content starts two columns in, past its border and the air inside it.
 func (m model) columnAt(x int) (sortKey, bool) {
 	cols := m.layout(m.tableWidth())
-	at := 0
+	x, at := x-2, 0
 	for _, c := range cols {
 		if x >= at && x < at+c.width {
 			return c.key, true
