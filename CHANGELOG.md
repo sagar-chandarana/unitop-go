@@ -8,6 +8,8 @@ to change.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-08-16
+
 ### Added
 
 - The side pane and full view describe the service, not just name it. Alongside
@@ -19,7 +21,6 @@ to change.
 - `MemoryMax` and a deliberately lowered `TasksMax` appear beside the current
   values, so `mem 76M/512M` says what the number is a fraction of. The default
   `TasksMax` — tens of thousands — stays hidden, as it means nothing.
-
 - The log can be searched and filtered by level. `/` follows the focus — it
   filters the table, or searches the log when that is what you are reading —
   and `e` cycles everything → warning and above → error and above. Both are
@@ -121,7 +122,8 @@ First release.
 - Static `linux/amd64` and `linux/arm64` binaries, a flake with an overlay, and
   nothing to configure.
 
-[Unreleased]: https://github.com/sagar-chandarana/unitop-go/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/sagar-chandarana/unitop-go/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/sagar-chandarana/unitop-go/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/sagar-chandarana/unitop-go/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/sagar-chandarana/unitop-go/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/sagar-chandarana/unitop-go/compare/v0.1.0...v0.1.1
