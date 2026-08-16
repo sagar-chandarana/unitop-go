@@ -8,6 +8,13 @@ to change.
 
 ## [Unreleased]
 
+### Changed
+
+- The heat ramp is back to five steps — grey, green, yellow, orange, red —
+  after the move to terminal colours had flattened it to four. Orange is
+  bright yellow, which every theme renders warmer than plain yellow, so the
+  gradient still comes entirely from the sixteen.
+
 ### Fixed
 
 - Rows in the table no longer turn bold at random. An error-priority line in

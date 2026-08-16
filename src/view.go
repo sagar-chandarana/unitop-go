@@ -390,19 +390,19 @@ func (m model) viewHost() []string {
 			ident = append(ident, stSubtle.Render("up "+humanDur(h.Uptime)))
 		}
 		ident = append(ident, stSubtle.Render("load ")+
-			lipgloss.NewStyle().Foreground(heat(h.LoadPct(), 20, 70, 100)).
+			lipgloss.NewStyle().Foreground(heat(h.LoadPct(), 20, 70, 100, 150)).
 				Render(fmt.Sprintf("%.2f %.2f %.2f", h.Load[0], h.Load[1], h.Load[2])))
 	}
 
 	usage := []string{
-		stSubtle.Render("cpu ") + lipgloss.NewStyle().Foreground(heat(h.CPUPct, 5, 50, 85)).
+		stSubtle.Render("cpu ") + lipgloss.NewStyle().Foreground(heat(h.CPUPct, 5, 40, 70, 90)).
 			Render(fmt.Sprintf("%.0f%%", h.CPUPct)),
-		stSubtle.Render("mem ") + lipgloss.NewStyle().Foreground(heat(h.MemPct(), 25, 70, 90)).
+		stSubtle.Render("mem ") + lipgloss.NewStyle().Foreground(heat(h.MemPct(), 25, 60, 80, 92)).
 			Render(humanBytes(h.MemUsed)) + stFaint.Render("/"+humanBytes(h.MemTotal)),
 	}
 	if h.SwapTotal > 0 && h.SwapUsed > 0 {
 		usage = append(usage, stSubtle.Render("swap ")+
-			lipgloss.NewStyle().Foreground(heat(h.SwapPct(), 1, 20, 60)).Render(humanBytes(h.SwapUsed)))
+			lipgloss.NewStyle().Foreground(heat(h.SwapPct(), 1, 20, 50, 80)).Render(humanBytes(h.SwapUsed)))
 	}
 	usage = append(usage, stSubtle.Render("net ")+
 		lipgloss.NewStyle().Foreground(colCyan).Render("↓"+humanRateFull(h.NetIn)+" ↑"+humanRateFull(h.NetOut)))
@@ -647,14 +647,14 @@ func cellFor(r row, c colDef, idx int) (string, lipgloss.Style) {
 		if u.CPUNSec == unsetU64 || !u.HasRates {
 			return "-", stFaint
 		}
-		return fmt.Sprintf("%.1f", u.CPUPct), lipgloss.NewStyle().Foreground(heat(u.CPUPct, 1, 25, 100))
+		return fmt.Sprintf("%.1f", u.CPUPct), lipgloss.NewStyle().Foreground(heat(u.CPUPct, 1, 20, 60, 150))
 
 	case "MEM":
 		if u.MemCurrent == unsetU64 {
 			return "-", stFaint
 		}
 		mb := float64(u.MemCurrent) / (1024 * 1024)
-		return humanBytes(u.MemCurrent), lipgloss.NewStyle().Foreground(heat(mb, 16, 256, 1024))
+		return humanBytes(u.MemCurrent), lipgloss.NewStyle().Foreground(heat(mb, 16, 128, 512, 2048))
 
 	case "NET↓", "NET↑":
 		if !u.IPAccount {
@@ -667,7 +667,7 @@ func cellFor(r row, c colDef, idx int) (string, lipgloss.Style) {
 		if !u.HasRates {
 			return "·", stFaint
 		}
-		return humanRate(v), lipgloss.NewStyle().Foreground(heat(v, 1024, 256*1024, 4*1024*1024))
+		return humanRate(v), lipgloss.NewStyle().Foreground(heat(v, 1024, 64*1024, 1024*1024, 16*1024*1024))
 
 	case "IO↓", "IO↑":
 		v, raw := u.IORRate, u.IORead
@@ -680,7 +680,7 @@ func cellFor(r row, c colDef, idx int) (string, lipgloss.Style) {
 		if !u.HasRates {
 			return "·", stFaint
 		}
-		return humanRate(v), lipgloss.NewStyle().Foreground(heat(v, 1024, 1024*1024, 16*1024*1024))
+		return humanRate(v), lipgloss.NewStyle().Foreground(heat(v, 1024, 256*1024, 4*1024*1024, 64*1024*1024))
 
 	case "RST":
 		if u.NRestarts == unsetU64 {
@@ -855,8 +855,8 @@ func (m model) unitLive(u Unit) string {
 		}
 	}
 	parts := []string{
-		field("cpu", cpu, heat(u.CPUPct, 1, 25, 100)),
-		field("mem", mem, heat(float64(orZero(u.MemCurrent))/(1<<20), 16, 256, 1024)),
+		field("cpu", cpu, heat(u.CPUPct, 1, 20, 60, 150)),
+		field("mem", mem, heat(float64(orZero(u.MemCurrent))/(1<<20), 16, 128, 512, 2048)),
 	}
 	if u.MemPeak != unsetU64 && u.MemPeak > 0 {
 		parts = append(parts, stFaint.Render("peak "+humanBytes(u.MemPeak)))

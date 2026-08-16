@@ -17,16 +17,17 @@ import "github.com/charmbracelet/lipgloss"
 //
 // Anything that is merely context is grey, and anything below notice is dim.
 var (
-	colDefault = lipgloss.NoColor{}  // the terminal's own foreground
-	colGrey    = lipgloss.Color("8") // bright black: present but secondary
-	colRed     = lipgloss.Color("1") //
-	colGreen   = lipgloss.Color("2") //
-	colYellow  = lipgloss.Color("3") //
-	colBlue    = lipgloss.Color("4") //
-	colMagenta = lipgloss.Color("5") //
-	colCyan    = lipgloss.Color("6") //
-	colSelBg   = lipgloss.Color("6") // the selected row: black on cyan, as htop
-	colSelFg   = lipgloss.Color("0") // the selected row's text, against that
+	colDefault = lipgloss.NoColor{}   // the terminal's own foreground
+	colGrey    = lipgloss.Color("8")  // bright black: present but secondary
+	colRed     = lipgloss.Color("1")  //
+	colGreen   = lipgloss.Color("2")  //
+	colYellow  = lipgloss.Color("3")  //
+	colBlue    = lipgloss.Color("4")  //
+	colMagenta = lipgloss.Color("5")  //
+	colCyan    = lipgloss.Color("6")  //
+	colOrange  = lipgloss.Color("11") // bright yellow: the heat step above yellow
+	colSelBg   = lipgloss.Color("6")  // the selected row: black on cyan, as htop
+	colSelFg   = lipgloss.Color("0")  // the selected row's text, against that
 )
 
 var (
@@ -45,10 +46,18 @@ var (
 	stFilter  = lipgloss.NewStyle().Foreground(colYellow).Bold(true)
 )
 
-// heat maps a magnitude onto four steps — dim, green, yellow, red. quiet is
-// the value below which something is not worth looking at, warn where it
-// starts to matter, and high where it is a problem.
-func heat(v, quiet, warn, high float64) lipgloss.TerminalColor {
+// heat ramps a magnitude across five steps, coolest to hottest:
+//
+//	grey    idle, or below the point of caring
+//	green   normal
+//	yellow  worth a glance
+//	orange  high
+//	red     wrong
+//
+// All five come from the terminal's own palette — orange is bright yellow,
+// which every theme renders warmer than plain yellow. Four thresholds mark the
+// boundaries, so a caller says where each step begins in its own units.
+func heat(v, quiet, warn, high, hot float64) lipgloss.TerminalColor {
 	switch {
 	case v < quiet:
 		return colGrey
@@ -56,6 +65,8 @@ func heat(v, quiet, warn, high float64) lipgloss.TerminalColor {
 		return colGreen
 	case v < high:
 		return colYellow
+	case v < hot:
+		return colOrange
 	default:
 		return colRed
 	}

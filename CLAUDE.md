@@ -161,9 +161,10 @@ These are decisions, not accidents. Change them deliberately, not incidentally.
   Never write a hex value or a 256-colour index: it would override the theme
   and force the light/dark problem back in. Six hues carry meaning — green
   healthy, yellow watch, red wrong, cyan finished-or-rate, blue keys, magenta
-  headings — everything else is grey or dim. Colour comes from `heat()` for
-  magnitudes and `stateColor()` for state; a test asserts the state colours
-  stay inside the palette.
+  headings — everything else is grey or dim. Magnitudes ramp through five
+  steps via `heat()` — grey, green, yellow, orange, red — where orange is
+  bright yellow, the one step that has no hue of its own. State comes from
+  `stateColor()`. Tests assert both stay inside the palette.
 
 **Talking to systemd**
 
