@@ -10,7 +10,11 @@ import (
 )
 
 const (
-	maxLogLines    = 4000
+	// maxLogLines bounds the log buffer. Live entries trim the oldest to stay
+	// under it; paging backwards stops there rather than trimming, because the
+	// lines it would drop are the ones being read. 20k entries is far more
+	// history than anyone scrolls by hand — past that, use journalctl.
+	maxLogLines    = 20000
 	journalBacklog = 500
 )
 
@@ -21,14 +25,15 @@ const (
 	focusLogs
 )
 
-// tableOnlyKeys sort, filter, group or move focus between panes — all of which
-// act on the unit table. In the full view there is no table to act on.
+// tableOnlyKeys sort, group or move focus between panes — all of which act on
+// the unit table. In the full view there is no table to act on. `/` is not
+// here: it filters whichever pane has focus, so in the full view it filters
+// the log.
 var tableOnlyKeys = map[string]bool{
 	"s": true, "S": true, // sort column
 	"r":   true, // reverse
 	"t":   true, // tree
 	"a":   true, // include inactive
-	"/":   true, // filter
 	"tab": true,
 }
 
@@ -86,9 +91,19 @@ type model struct {
 	journal   *journalStream
 	logScroll int // wrapped display lines scrolled up from the bottom
 	logFollow bool
-	logWrap   bool
-	showLogs  bool
-	fullView  bool
+	// Paging backwards through the journal: unitop starts with the last
+	// journalBacklog entries and fetches earlier pages when you scroll to the
+	// top, rather than pretending that is where the log begins.
+	logEpoch     int        // bumped on every change to logs, to invalidate totals
+	totals       *logTotals // memoised wrapped height of the buffer
+	loadingOlder bool
+	logAtStart   bool      // the journal has nothing older than what we hold
+	logFilt      logFilter // applied by journalctl, so it searches the whole log
+	filterLogs   bool      // the filter editor is aimed at the log, not the table
+	logLoadErr   string    // why the last page failed, if it did
+	logWrap      bool
+	showLogs     bool
+	fullView     bool
 
 	menu     ctxMenu
 	toast    string
@@ -114,6 +129,7 @@ func newModel(r runner, hostLabel string, interval time.Duration, sortBy sortKey
 		tree:      tree,
 		filter:    filter,
 		collapsed: map[string]bool{},
+		totals:    &logTotals{epoch: -1},
 		logFollow: true,
 		logWrap:   true,
 		showLogs:  true,
@@ -179,8 +195,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case spinnerTickMsg:
-		if m.connected {
-			return m, nil // stop animating; nothing re-arms it
+		// Animate while something is pending: the first connection, or a page
+		// of earlier log entries. Otherwise stop re-arming.
+		if m.connected && !m.loadingOlder {
+			return m, nil
 		}
 		m.spinner++
 		return m, spinnerTickCmd()
@@ -220,6 +238,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.logs) > maxLogLines {
 				m.logs = append([]logLine(nil), m.logs[len(m.logs)-maxLogLines:]...)
 			}
+			m.logEpoch++
 			if m.logFollow {
 				m.logScroll = 0
 			} else {
@@ -231,6 +250,21 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, waitJournal(m.journal)
+
+	case olderBatch:
+		if msg.gen != m.logGen {
+			return m, nil // for a unit we have navigated away from
+		}
+		m.loadingOlder = false
+		m.logLoadErr = msg.err
+		m.logAtStart = msg.atEnd
+		if len(msg.lines) > 0 {
+			// Prepending does not move the view: logScroll counts from the
+			// bottom, and the bottom has not moved.
+			m.logs = append(msg.lines, m.logs...)
+			m.logEpoch++
+		}
+		return m, nil
 
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
@@ -270,26 +304,40 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.filterInput {
+		// The same editor drives both filters; filterLogs says which one is
+		// being typed into.
+		text := &m.filter
+		if m.filterLogs {
+			text = &m.logFilt.grep
+		}
 		switch msg.Type {
 		case tea.KeyEnter:
 			m.filterInput = false
 		case tea.KeyEsc:
 			m.filterInput = false
-			m.filter = ""
+			*text = ""
 		case tea.KeyBackspace:
-			if r := []rune(m.filter); len(r) > 0 {
-				m.filter = string(r[:len(r)-1])
+			if r := []rune(*text); len(r) > 0 {
+				*text = string(r[:len(r)-1])
 			}
 		case tea.KeyCtrlU:
-			m.filter = ""
+			*text = ""
 		case tea.KeyRunes, tea.KeySpace:
-			m.filter += string(msg.Runes)
+			*text += string(msg.Runes)
 			if msg.Type == tea.KeySpace {
-				m.filter += " "
+				*text += " "
 			}
 		case tea.KeyCtrlC:
 			return m, tea.Quit
 		default:
+			return m, nil
+		}
+		if m.filterLogs {
+			// Re-running journalctl per keystroke would spawn a process per
+			// character; wait for Enter or Esc to settle.
+			if !m.filterInput {
+				return m, m.syncJournal()
+			}
 			return m, nil
 		}
 		m.rebuild()
@@ -328,9 +376,17 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "/":
+		// Filter whatever has focus: the log when reading it, else the table.
+		m.filterLogs = m.fullView || m.focus == focusLogs
 		m.filterInput = true
 		m.help = false
 		return m, nil
+	case "e":
+		if !m.logPaneVisible() {
+			return m, nil
+		}
+		m.logFilt.prio = nextPriority(m.logFilt.prio)
+		return m, m.syncJournal()
 	case "s":
 		m.sortBy = m.nextVisibleSort(1)
 		m.rebuild()
@@ -489,10 +545,53 @@ func (m *model) collapseOrParent() tea.Cmd {
 // scrollLog moves the log view and keeps follow in step with it: resting at the
 // live end *is* following, and anywhere else is not. Without this, scrolling
 // back down to the bottom left follow off and the log sat still.
-func (m *model) scrollLog(delta int) {
+//
+// Reaching the top asks the journal for the page before what we hold, so the
+// buffer is a window onto the log rather than its beginning.
+func (m *model) scrollLog(delta int) tea.Cmd {
 	m.logScroll += delta
 	m.clampLogScroll()
 	m.logFollow = m.logScroll == 0
+	if delta > 0 && m.atTopOfLog() {
+		return m.loadOlder()
+	}
+	return nil
+}
+
+func (m model) atTopOfLog() bool {
+	return m.logScroll >= m.logDisplayTotal()-m.logHeight()
+}
+
+// logBufferFull reports that no more history will be paged in.
+func (m model) logBufferFull() bool { return len(m.logs) >= maxLogLines }
+
+// loadOlder fetches the page before the oldest line held, once at a time.
+func (m *model) loadOlder() tea.Cmd {
+	if m.loadingOlder || m.logAtStart || len(m.logs) == 0 || m.journal == nil {
+		return nil
+	}
+	// Refuse rather than grow without bound. Trimming instead would throw away
+	// the very lines the reader scrolled back to see.
+	if m.logBufferFull() {
+		return nil
+	}
+	oldest := ""
+	for _, l := range m.logs {
+		if l.cursor != "" {
+			oldest = l.cursor
+			break
+		}
+	}
+	if oldest == "" {
+		return nil // nothing but meta lines; there is no position to page from
+	}
+	m.loadingOlder = true
+	m.logLoadErr = ""
+	// Restart the spinner: it stops re-arming once connected.
+	return tea.Batch(
+		fetchOlder(context.Background(), m.r, m.journal.unit, oldest, m.logFilt, journalBacklog, m.logGen),
+		spinnerTickCmd(),
+	)
 }
 
 const scrollToEnd = 1 << 30 // clamped to the real limit by clampLogScroll
@@ -501,17 +600,17 @@ func (m *model) logKey(k string) tea.Cmd {
 	page := max(1, m.logHeight()-1)
 	switch k {
 	case "up", "k":
-		m.scrollLog(1)
+		return m.scrollLog(1)
 	case "down", "j":
-		m.scrollLog(-1)
+		return m.scrollLog(-1)
 	case "pgup", "ctrl+b":
-		m.scrollLog(page)
+		return m.scrollLog(page)
 	case "pgdown", "ctrl+f":
-		m.scrollLog(-page)
+		return m.scrollLog(-page)
 	case "end", "G":
-		m.scrollLog(-scrollToEnd)
+		return m.scrollLog(-scrollToEnd)
 	case "home", "g":
-		m.scrollLog(scrollToEnd)
+		return m.scrollLog(scrollToEnd)
 	}
 	return nil
 }
@@ -538,15 +637,13 @@ func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	switch msg.Button {
 	case tea.MouseButtonWheelUp:
 		if overLogs {
-			m.scrollLog(3)
-			return m, nil
+			return m, m.scrollLog(3)
 		}
 		m.cursor -= 3
 		return m, m.afterCursorMove()
 	case tea.MouseButtonWheelDown:
 		if overLogs {
-			m.scrollLog(-3)
-			return m, nil
+			return m, m.scrollLog(-3)
 		}
 		m.cursor += 3
 		return m, m.afterCursorMove()
@@ -740,7 +837,7 @@ func (m *model) clampCursor() {
 }
 
 func (m *model) clampLogScroll() {
-	total := m.countDisplayLines(m.logs)
+	total := m.logDisplayTotal()
 	maxScroll := max(0, total-m.logHeight())
 	if m.logScroll > maxScroll {
 		m.logScroll = maxScroll
@@ -759,18 +856,21 @@ func (m *model) syncJournal() tea.Cmd {
 			want = r.unit.Name
 		}
 	}
-	if m.journal != nil && m.journal.unit == want {
+	// A filter change reruns journalctl, because the filtering happens there.
+	if m.journal != nil && m.journal.unit == want && m.journal.filter == m.logFilt {
 		return nil
 	}
 	m.journal.stop()
 	m.journal = nil
 	m.logs = nil
 	m.logScroll = 0
+	m.logEpoch++
+	m.loadingOlder, m.logAtStart, m.logLoadErr = false, false, ""
 	m.logGen++
 	if want == "" {
 		return nil
 	}
-	m.journal = startJournal(context.Background(), m.r, want, journalBacklog, m.logGen)
+	m.journal = startJournal(context.Background(), m.r, want, m.logFilt, journalBacklog, m.logGen)
 	return waitJournal(m.journal)
 }
 

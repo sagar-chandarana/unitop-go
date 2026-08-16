@@ -123,6 +123,31 @@ func (m model) countDisplayLines(lines []logLine) int {
 	return n
 }
 
+// logTotals memoises the wrapped height of the whole buffer. Every scroll key
+// needs it, and re-wrapping 20k retained entries per keypress made scrolling
+// visibly slow. Keyed on the buffer's epoch so a trim-and-append that leaves
+// the length unchanged still invalidates it.
+type logTotals struct {
+	epoch, n, width, total int
+	wrap                   bool
+}
+
+func (m model) logDisplayTotal() int {
+	c := m.totals
+	if c == nil {
+		return m.countDisplayLines(m.logs)
+	}
+	// Keyed on both the epoch and the length: the epoch catches a trim-and-
+	// append that leaves the length unchanged, the length catches anything that
+	// edits the buffer without bumping the epoch.
+	w, wrap, n := m.logInnerWidth(), m.logWrap, len(m.logs)
+	if c.epoch != m.logEpoch || c.n != n || c.width != w || c.wrap != wrap {
+		c.epoch, c.n, c.width, c.wrap = m.logEpoch, n, w, wrap
+		c.total = m.countDisplayLines(m.logs)
+	}
+	return c.total
+}
+
 // ---------- top level ----------
 
 func (m model) View() string {
@@ -711,6 +736,10 @@ func (m model) unitDetail(u Unit, width int) []string {
 	title := lipgloss.NewStyle().Foreground(stateColor(u)).Bold(true).
 		Render(truncRunes(shortUnit(u.Name), max(1, width/2)))
 	title += "  " + stateText(u)
+	// A filtered log looks like a quiet one unless it says so.
+	if !m.logFilt.empty() {
+		title += "  " + stFilter.Render(m.logFilt.label())
+	}
 
 	// Wide enough, the lifecycle facts sit opposite the name; in a narrow pane
 	// hjoin would drop them entirely, so they get a line of their own.
@@ -889,11 +918,43 @@ func (m model) renderLogWindow(width, height int) []string {
 		end = 0
 	}
 	win := acc[max(0, end-height):end]
-	if m.logScroll > 0 && len(win) > 0 {
+	if len(win) == 0 {
+		return win
+	}
+	win = append([]string(nil), win...)
+
+	// The bottom line says how far behind the live end you are.
+	if m.logScroll > 0 {
 		marker := stWarn.Render(fmt.Sprintf("── paused, %d lines below (f or G to follow) ──", m.logScroll))
-		win = append(append([]string(nil), win[:len(win)-1]...), truncANSI(marker, width))
+		win[len(win)-1] = truncANSI(marker, width)
+	}
+	// The top line says where this buffer came from, so its first entry is
+	// never mistaken for the start of the journal.
+	if m.atTopOfLog() {
+		win[0] = truncANSI(m.logTopMarker(width), width)
 	}
 	return win
+}
+
+// logTopMarker reports the state of the backwards paging at the top of the
+// buffer: loading, failed, exhausted, or more available.
+func (m model) logTopMarker(width int) string {
+	switch {
+	case m.loadingOlder:
+		frame := string(spinnerFrames[m.spinner%len(spinnerFrames)])
+		return lipgloss.NewStyle().Foreground(colMauve).Render(frame) +
+			stWarn.Render(" loading earlier entries…")
+	case m.logLoadErr != "":
+		return stBad.Render("── could not load earlier entries: ") +
+			lipgloss.NewStyle().Foreground(colRed).Render(truncRunes(m.logLoadErr, max(10, width-40)))
+	case m.logAtStart:
+		return stFaint.Render("── beginning of this unit's journal ──")
+	case m.logBufferFull():
+		return stWarn.Render(fmt.Sprintf(
+			"── %d lines held, the most unitop keeps; use journalctl for more ──", len(m.logs)))
+	default:
+		return stSubtle.Render("── earlier entries exist; keep scrolling to load ──")
+	}
 }
 
 // formatLog renders one journal entry into the wrapped display lines it needs.
@@ -1059,7 +1120,12 @@ func (m model) confirmBox() []string {
 
 func (m model) viewFooter() string {
 	if m.filterInput {
-		return stFilter.Render("/") + stBase.Render(m.filter) + lipgloss.NewStyle().Foreground(colMauve).Render("▏") +
+		what, text := "filter units", m.filter
+		if m.filterLogs {
+			what, text = "search log", m.logFilt.grep
+		}
+		return stSubtle.Render(what+" ") + stFilter.Render("/") + stBase.Render(text) +
+			lipgloss.NewStyle().Foreground(colMauve).Render("▏") +
 			stFaint.Render("  enter=apply  esc=clear")
 	}
 	if m.toast != "" {
@@ -1076,10 +1142,16 @@ func (m model) viewFooter() string {
 	keys := [][2]string{
 		{"↑↓", "move"}, {"enter", "full view"}, {"x", "actions"}, {"tab", "focus"},
 		{"s", "sort"}, {"r", "rev"}, {"t", "tree"}, {"/", "filter"}, {"a", "all"},
-		{"f", "follow"}, {"l", "log"}, {"?", "help"}, {"q", "quit"},
+		{"f", "follow"}, {"e", "level"}, {"l", "log"}, {"?", "help"}, {"q", "quit"},
 	}
 	if m.fullView {
 		keys[1] = [2]string{"enter/esc", "back"}
+		// In the full view "/" searches the log, not the table.
+		for i := range keys {
+			if keys[i][0] == "/" {
+				keys[i][1] = "search"
+			}
+		}
 		// Offer only what actually does something without a table on screen.
 		keys = slices.DeleteFunc(keys, func(k [2]string) bool {
 			return k[0] == "l" || tableOnlyKeys[k[0]]
@@ -1089,22 +1161,32 @@ func (m model) viewFooter() string {
 	// Fit whole hints, dropping the ones that do not fit. Cutting the line at
 	// the width instead would leave a half-written key, which reads as a
 	// rendering fault rather than a narrow terminal.
+	//
+	// "q quit" is rendered last but reserved first: dropping from the end would
+	// take how-to-quit before anything else, which is the one hint that must
+	// survive a narrow terminal.
 	sep := stFaint.Render(" · ")
+	render := func(k [2]string) string {
+		d, st := k[1], stFaint
+		if k[0] == "f" && !m.logFollow {
+			st, d = stWarn, "follow off"
+		}
+		return stKey.Render(k[0]) + st.Render(" "+d)
+	}
+
+	quit := render([2]string{"q", "quit"})
+	keys = slices.DeleteFunc(keys, func(k [2]string) bool { return k[0] == "q" })
+	budget := m.width - lipgloss.Width(quit) - 3 // the separator before it
+
 	var line string
 	used := 0
 	for _, k := range keys {
-		d := k[1]
-		st := stFaint
-		if k[0] == "f" && !m.logFollow {
-			st = stWarn
-			d = "follow off"
-		}
-		hint := stKey.Render(k[0]) + st.Render(" "+d)
+		hint := render(k)
 		w := lipgloss.Width(hint)
 		if line != "" {
-			w += 3 // the separator
+			w += 3
 		}
-		if used+w > m.width {
+		if used+w > budget {
 			break
 		}
 		if line != "" {
@@ -1113,7 +1195,10 @@ func (m model) viewFooter() string {
 		line += hint
 		used += w
 	}
-	return line
+	if line == "" {
+		return quit
+	}
+	return line + sep + quit
 }
 
 func (m model) viewHelp() []string {
@@ -1130,9 +1215,11 @@ func (m model) viewHelp() []string {
 		{"click", "on a column header sorts by it; again reverses"},
 		{"right-click", "on a unit opens start/stop/restart/kill"},
 		{"t", "tree view, grouped by slice"},
-		{"/", "filter by unit name or description (esc clears)"},
+		{"/", "filter: the table, or the log when it has focus (esc clears)"},
+		{"e", "log level: everything, warning and above, error and above"},
 		{"a", "include inactive/dead units"},
 		{"f", "follow the log (auto-scroll); scrolling up turns it off"},
+		{"", "scrolling to the top loads the previous 500 journal entries"},
 		{"l", "toggle the log pane (no effect in the full view)"},
 		{"w", "toggle log wrapping"},
 		{"p", "pause polling"},

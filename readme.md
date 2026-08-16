@@ -140,7 +140,8 @@ uptime`.
 | `s` / `S` | sort by the next / previous **visible** column |
 | `r` | reverse the sort |
 | `t` | tree view, grouped by slice |
-| `/` | filter on name or description (`esc` clears) |
+| `/` | filter: the table, or the log when it has focus (`esc` clears) |
+| `e` | log level: everything → warning and above → error and above |
 | `a` | include inactive/dead units |
 | `f` | follow the log; scrolling up turns it off |
 | `l` | toggle the log pane |
@@ -151,8 +152,9 @@ uptime`.
 | `?` | help |
 | `q` | quit |
 
-Sorting, filtering, tree and pane focus (`s` `S` `r` `t` `a` `/` `tab`) act on
-the table, so the full view ignores them and does not offer them.
+Sorting, tree and pane focus (`s` `S` `r` `t` `a` `tab`) act on the table, so
+the full view ignores them and does not offer them. `/` follows the focus: it
+filters the table, or searches the log when that is what you are reading.
 
 The mouse works too: the wheel scrolls whichever pane it is over, a click on a
 **column header** sorts by it (again to reverse), a click on a slice's `▾`
@@ -194,6 +196,26 @@ Actions run `systemctl` directly, so they need privilege: run as root, or pass
 used — it would take over the terminal — so an unprivileged run reports
 `Interactive authentication required` and suggests `-sudo`. `-read-only`
 removes the menu entirely.
+
+## Logs
+
+The pane starts with the last 500 entries for the selected unit and follows.
+Scroll to the top and it fetches the previous 500, and keeps going as you keep
+scrolling — so the buffer is a window onto the journal rather than all there is.
+The top line always says which: `loading earlier entries…` while a page is in
+flight, `beginning of this unit's journal` when there is genuinely nothing
+older, and otherwise that more exists and scrolling will load it.
+
+Paging uses journald cursors, so pages join exactly — no duplicated or skipped
+entries. Switching units starts over.
+
+`/` with the log focused searches it, and `e` cycles the level shown
+(everything → warning and above → error and above). Both are handed to
+journalctl as `-g` and `-p`, so they search the **whole journal**, not just the
+entries already fetched — and the follow stream and the backwards paging both
+honour them. `-g` is a PCRE, case-insensitive while the pattern is lowercase.
+An active filter is shown beside the unit name, so a quiet log is never
+mistaken for a broken one.
 
 ## What the columns mean
 

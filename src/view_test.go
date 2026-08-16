@@ -467,7 +467,7 @@ func TestEnterOnSliceDoesNotOpenFullView(t *testing.T) {
 var allFooterHints = []string{
 	"↑↓ move", "enter full view", "enter/esc back", "x actions", "tab focus",
 	"s sort", "r rev", "t tree", "/ filter", "a all", "f follow", "f follow off",
-	"l log", "? help", "q quit",
+	"e level", "w wrap", "l log", "? help", "q quit",
 }
 
 // The footer drops whole hints when the terminal is narrow; a hint cut in half
@@ -498,10 +498,12 @@ func TestFooterDropsWholeHints(t *testing.T) {
 				t.Errorf("width %d: %q is not a complete hint (footer %q)", w, hint, plain)
 			}
 		}
-		if w >= 140 && !strings.Contains(plain, "q quit") {
-			t.Errorf("width %d: a wide footer should still offer quit: %q", w, plain)
+		// Quit is reserved, so it survives at every width — it is the one hint
+		// you cannot afford to lose.
+		if !strings.Contains(plain, "q quit") {
+			t.Errorf("width %d: the footer dropped how to quit: %q", w, plain)
 		}
-		if w == 40 && strings.Contains(plain, "q quit") {
+		if w == 40 && strings.Contains(plain, "t tree") {
 			t.Errorf("width 40: footer should have dropped later hints: %q", plain)
 		}
 	}
@@ -574,7 +576,9 @@ func TestFullViewIgnoresTableKeys(t *testing.T) {
 		focus          focusArea
 	}{m.sortBy, m.reverse, m.tree, m.showAll, m.filterInput, m.focus}
 
-	for _, k := range []string{"s", "S", "r", "t", "a", "/", "tab"} {
+	// "/" is deliberately absent: in the full view it filters the log, which is
+	// checked separately below.
+	for _, k := range []string{"s", "S", "r", "t", "a", "tab"} {
 		m.handleKey(keyOf(k))
 		if m.sortBy != before.sortBy || m.reverse != before.reverse || m.tree != before.tree ||
 			m.showAll != before.showAll || m.filterInput != before.input || m.focus != before.focus {
@@ -591,10 +595,21 @@ func TestFullViewIgnoresTableKeys(t *testing.T) {
 			t.Errorf("footer still offers %q in the full view: %s", gone, foot)
 		}
 	}
-	for _, kept := range []string{"enter/esc back", "x actions", "f follow", "q quit"} {
+	for _, kept := range []string{"enter/esc back", "x actions", "f follow", "/ search", "q quit"} {
 		if !strings.Contains(foot, kept) {
 			t.Errorf("footer dropped %q, which still works: %s", kept, foot)
 		}
+	}
+
+	// "/" does work in the full view: it searches the log rather than the table.
+	m.handleKey(keyOf("/"))
+	if !m.filterInput || !m.filterLogs {
+		t.Errorf("/ in the full view should open the log search: input=%v logs=%v",
+			m.filterInput, m.filterLogs)
+	}
+	m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.filter != "" {
+		t.Error("the log search must not have touched the unit filter")
 	}
 
 	// The same keys keep working once the table is back.
@@ -609,8 +624,11 @@ func TestFullViewIgnoresTableKeys(t *testing.T) {
 }
 
 func keyOf(s string) tea.KeyMsg {
-	if s == "tab" {
+	switch s {
+	case "tab":
 		return tea.KeyMsg{Type: tea.KeyTab}
+	case "\r":
+		return tea.KeyMsg{Type: tea.KeyEnter}
 	}
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 }
@@ -814,3 +832,5 @@ func TestTasksLimitOnlyShownWhenItMeansSomething(t *testing.T) {
 		}
 	}
 }
+
+func escKey() tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyEsc} }

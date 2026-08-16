@@ -20,6 +20,20 @@ to change.
   values, so `mem 76M/512M` says what the number is a fraction of. The default
   `TasksMax` — tens of thousands — stays hidden, as it means nothing.
 
+- The log can be searched and filtered by level. `/` follows the focus — it
+  filters the table, or searches the log when that is what you are reading —
+  and `e` cycles everything → warning and above → error and above. Both are
+  passed to journalctl as `-g` and `-p`, so they search the **whole journal**
+  rather than the entries already fetched, and the follow stream and the
+  backwards paging both honour them. An active filter is shown beside the unit
+  name, so a filtered log is never mistaken for a quiet one.
+- The log pages backwards. It still opens on the last 500 entries, but
+  scrolling to the top now fetches the previous 500 and keeps going, so the
+  buffer is a window onto the journal instead of all you can reach. The top
+  line says which state you are in: loading, the genuine beginning of the
+  unit's journal, or more available. Paging uses journald cursors, so pages
+  join exactly — nothing duplicated or skipped.
+
 ### Changed
 
 - The side pane grows its detail block on a tall terminal and shrinks it on a
