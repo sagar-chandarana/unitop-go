@@ -203,3 +203,46 @@ func TestBufferIsBounded(t *testing.T) {
 		t.Error("a buffer under the cap should still page")
 	}
 }
+
+// F is the top and G the bottom, in the log as in the table, and the keys that
+// were only ever aliases no longer answer. Binding two keys to one motion is
+// cheap to add and expensive to keep explaining, so this pins what is left.
+func TestMotionKeysHaveOneMeaningEach(t *testing.T) {
+	m := pagingModel(200)
+	m.logKey("F")
+	if !m.atTopOfLog() {
+		t.Error("F did not go to the top of the log")
+	}
+	m.logKey("end")
+	if m.logScroll != 0 {
+		t.Errorf("end did not return to the live end: logScroll = %d", m.logScroll)
+	}
+	if !m.logFollow {
+		t.Error("resting at the live end should follow")
+	}
+
+	m.focus = focusList
+	m.cursor = 3
+	m.listKey("F")
+	if m.cursor != 0 {
+		t.Errorf("F did not go to the top of the table: cursor = %d", m.cursor)
+	}
+
+	m.cursor = 3
+	for _, k := range []string{"j", "k", "h", "g", "G", "ctrl+b", "ctrl+f"} {
+		m.listKey(k)
+		if m.cursor != 3 {
+			t.Errorf("%q still moves the cursor; it was removed", k)
+			m.cursor = 3
+		}
+	}
+
+	d := m.interval
+	for _, k := range []string{"=", "_"} {
+		m.handleKey(keyOf(k))
+		if m.interval != d {
+			t.Errorf("%q still changes the interval; it was removed", k)
+			m.interval = d
+		}
+	}
+}

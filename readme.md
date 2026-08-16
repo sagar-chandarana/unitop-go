@@ -132,8 +132,8 @@ uptime`.
 
 | key | action |
 | --- | --- |
-| `↑`/`k` `↓`/`j`, `pgup`/`pgdn`, `g`/`G` | move; scrolls the log when focused |
-| `←`/`h` `→` | collapse / expand a slice in tree view |
+| `↑` `↓`, `pgup`/`pgdn`, `F`/`end` | move; scrolls the log when focused |
+| `←` `→` | collapse / expand a slice in tree view |
 | `tab` | switch focus between the table and the log |
 | `enter` | full view for a unit (`esc` back); expand/collapse a slice |
 | `x` | start / stop / restart / kill the selected unit |

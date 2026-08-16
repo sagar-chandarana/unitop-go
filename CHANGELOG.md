@@ -10,6 +10,13 @@ to change.
 
 ### Changed
 
+- One motion, one key. Movement is the arrows, `pgup`/`pgdn`, `F` or `home`
+  for the top and `end` for the bottom — in the table, the log and the action
+  menu alike. The vim aliases (`j` `k` `h`, `g`, `G`) and the readline ones
+  (`ctrl+b`, `ctrl+f`) are gone; so are `=`/`_`, which duplicated `+`/`-`, and
+  `r` as a third way to retry a failed connection alongside `R` and `enter`.
+  `ctrl+f` in particular fought the `f` that follows the log, which is
+  unchanged.
 - The heat ramp is back to five steps — grey, green, yellow, orange, red —
   after the move to terminal colours had flattened it to four. Orange is
   bright yellow, which every theme renders warmer than plain yellow, so the

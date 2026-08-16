@@ -119,13 +119,13 @@ func (m *model) menuKey(k string) (bool, tea.Cmd) {
 	switch k {
 	case "esc", "q":
 		m.menu = ctxMenu{}
-	case "up", "k":
+	case "up":
 		m.menu.cursor = (m.menu.cursor - 1 + len(unitActions)) % len(unitActions)
-	case "down", "j":
+	case "down":
 		m.menu.cursor = (m.menu.cursor + 1) % len(unitActions)
-	case "home", "g":
+	case "home", "F":
 		m.menu.cursor = 0
-	case "end", "G":
+	case "end":
 		m.menu.cursor = len(unitActions) - 1
 	case "enter", " ":
 		if m.menu.action().confirm {

@@ -1217,10 +1217,10 @@ func (m model) viewFooter() string {
 
 func (m model) viewHelp() []string {
 	rows := [][2]string{
-		{"↑/k ↓/j", "move selection (or scroll logs when focused)"},
+		{"↑ ↓", "move selection (or scroll logs when focused)"},
 		{"pgup/pgdn", "page"},
-		{"g / G", "top / bottom"},
-		{"←/h →", "collapse / expand a slice in tree mode"},
+		{"F / end", "top / bottom (home works too)"},
+		{"← →", "collapse / expand a slice in tree mode"},
 		{"tab", "switch focus between the unit list and the log pane"},
 		{"enter", "on a unit: full view (esc returns); on a slice: expand/collapse"},
 		{"x", "start / stop / restart / kill the selected unit"},

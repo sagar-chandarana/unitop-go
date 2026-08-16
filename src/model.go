@@ -282,7 +282,7 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
-		case "R", "r", "enter":
+		case "R", "enter":
 			// An explicit retry clears a fatal verdict: the user may have just
 			// upgraded systemd on the other end.
 			if !m.polling {
@@ -437,10 +437,10 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.pollCmd()
 		}
 		return m, nil
-	case "+", "=":
+	case "+":
 		m.interval = clampInterval(m.interval - stepFor(m.interval, -1))
 		return m, nil
-	case "-", "_":
+	case "-":
 		m.interval = clampInterval(m.interval + stepFor(m.interval, 1))
 		return m, nil
 	case "enter":
@@ -492,22 +492,28 @@ func (m *model) activateRow() tea.Cmd {
 	return m.syncJournal()
 }
 
+// listKey moves the table cursor: arrows by a line, PgUp/PgDn by a page, Home
+// or F to the top, End to the bottom. One key per motion. The vim aliases
+// (hjkl, g/G) and the readline ones (ctrl+b/ctrl+f) each gave a second and
+// third way to say what the arrows already say, and every letter they held is a
+// letter unavailable for a command — ctrl+f in particular fought the f that
+// follows the log.
 func (m *model) listKey(k string) tea.Cmd {
 	page := max(1, m.listRows()-1)
 	switch k {
-	case "up", "k":
+	case "up":
 		m.cursor--
-	case "down", "j":
+	case "down":
 		m.cursor++
-	case "pgup", "ctrl+b":
+	case "pgup":
 		m.cursor -= page
-	case "pgdown", "ctrl+f":
+	case "pgdown":
 		m.cursor += page
-	case "home", "g":
+	case "home", "F":
 		m.cursor = 0
-	case "end", "G":
+	case "end":
 		m.cursor = len(m.rows) - 1
-	case "left", "h":
+	case "left":
 		return m.collapseOrParent()
 	case "right":
 		if r, ok := m.selectedRow(); ok && r.kind == rowSlice && !r.expanded {
@@ -599,17 +605,17 @@ const scrollToEnd = 1 << 30 // clamped to the real limit by clampLogScroll
 func (m *model) logKey(k string) tea.Cmd {
 	page := max(1, m.logHeight()-1)
 	switch k {
-	case "up", "k":
+	case "up":
 		return m.scrollLog(1)
-	case "down", "j":
+	case "down":
 		return m.scrollLog(-1)
-	case "pgup", "ctrl+b":
+	case "pgup":
 		return m.scrollLog(page)
-	case "pgdown", "ctrl+f":
+	case "pgdown":
 		return m.scrollLog(-page)
-	case "end", "G":
+	case "end":
 		return m.scrollLog(-scrollToEnd)
-	case "home", "g":
+	case "home", "F":
 		return m.scrollLog(scrollToEnd)
 	}
 	return nil
