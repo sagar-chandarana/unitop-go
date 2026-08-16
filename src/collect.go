@@ -99,6 +99,14 @@ type Unit struct {
 	Result      string
 	Type        string
 	Fragment    string
+	FileState   string // UnitFileState: enabled, disabled, static, masked…
+	RestartPol  string // Restart=: no, always, on-failure…
+	ExecStart   string // the argv of the first ExecStart=
+	StatusText  string // what the service reports of itself via sd_notify
+	User        string // empty means root
+	TriggeredBy string // the socket or timer that activates it
+	MemMax      uint64 // MemoryMax, unset when infinity
+	TasksLimit  uint64 // TasksMax, unset when infinity
 	NRestarts   uint64
 	MainPID     uint64
 	ExecStatus  uint64 // ExecMainStatus: exit code, or signal number when killed
@@ -144,6 +152,8 @@ var showProperties = strings.Join([]string{
 	"IPAccounting", "IPIngressBytes", "IPEgressBytes",
 	"IOReadBytes", "IOWriteBytes",
 	"ActiveEnterTimestamp", "StateChangeTimestamp",
+	"UnitFileState", "Restart", "ExecStart", "StatusText",
+	"User", "TriggeredBy", "MemoryMax", "TasksMax",
 }, ",")
 
 type sample struct {
@@ -365,6 +375,8 @@ func parseShow(out string) []Unit {
 			ExecStatus: unsetU64,
 			ExecCode:   unsetU64,
 			Tasks:      unsetU64,
+			MemMax:     unsetU64,
+			TasksLimit: unsetU64,
 			MemCurrent: unsetU64,
 			MemPeak:    unsetU64,
 			CPUNSec:    unsetU64,
@@ -425,6 +437,25 @@ func parseShow(out string) []Unit {
 				u.IORead = parseU64(v)
 			case "IOWriteBytes":
 				u.IOWrite = parseU64(v)
+			case "UnitFileState":
+				u.FileState = v
+			case "Restart":
+				u.RestartPol = v
+			case "ExecStart":
+				// A unit may declare several; the first is the one that ran.
+				if u.ExecStart == "" {
+					u.ExecStart = parseExecStart(v)
+				}
+			case "StatusText":
+				u.StatusText = v
+			case "User":
+				u.User = v
+			case "TriggeredBy":
+				u.TriggeredBy = v
+			case "MemoryMax":
+				u.MemMax = parseU64(v) // "infinity" parses as unset, which is right
+			case "TasksMax":
+				u.TasksLimit = parseU64(v)
 			case "ActiveEnterTimestamp":
 				u.ActiveSince = parseUnixTS(v)
 			case "StateChangeTimestamp":
@@ -443,6 +474,21 @@ func parseShow(out string) []Unit {
 		units = append(units, u)
 	}
 	return units
+}
+
+// parseExecStart pulls the command out of systemd's structured rendering:
+//
+//	{ path=/usr/bin/caddy ; argv[]=caddy run --config /etc/caddy ; flags=… }
+func parseExecStart(v string) string {
+	i := strings.Index(v, "argv[]=")
+	if i < 0 {
+		return ""
+	}
+	argv := v[i+len("argv[]="):]
+	if j := strings.Index(argv, " ; "); j >= 0 {
+		argv = argv[:j]
+	}
+	return strings.TrimSpace(argv)
 }
 
 // parseU64 treats systemd's "[not set]" and the u64 sentinel alike.

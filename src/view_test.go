@@ -389,9 +389,9 @@ func TestEnterTogglesFullView(t *testing.T) {
 			t.Errorf("full view is missing %q:\n%s", want, out)
 		}
 	}
-	for _, line := range m.viewUnitFull(testUnits()[0], m.width) {
+	for _, line := range m.unitDetail(testUnits()[0], m.width) {
 		if lipglossWidth(line) > m.width {
-			t.Errorf("full-view header line is %d wide, screen is %d", lipglossWidth(line), m.width)
+			t.Errorf("detail line is %d wide, screen is %d", lipglossWidth(line), m.width)
 		}
 	}
 	if n := strings.Count(out, "\n"); n != 29 {
@@ -678,5 +678,139 @@ func TestScrollingToTheBottomResumesFollowing(t *testing.T) {
 	m.logKey("up")
 	if !m.logFollow {
 		t.Error("a log that fits on screen should keep following")
+	}
+}
+
+func detailUnit() Unit {
+	return Unit{
+		Name: "caddy.service", Desc: "Caddy web server", Slice: "system.slice",
+		Active: "active", Sub: "running", Type: "notify", FileState: "enabled",
+		RestartPol: "on-failure", User: "caddy", TriggeredBy: "caddy.socket",
+		StatusText: "serving 4 sites", ExecStart: "caddy run --config /etc/caddy/conf",
+		Fragment: "/etc/systemd/system/caddy.service",
+		MainPID:  1314, NRestarts: 2, Tasks: 22, MemCurrent: 76 << 20, MemMax: 512 << 20,
+		CPUPct: 18.9, HasRates: true, ActiveSince: time.Now().Add(-2 * time.Hour),
+	}
+}
+
+// The detail block should answer the questions you open a service to ask.
+func TestUnitDetailShowsConfiguration(t *testing.T) {
+	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
+	m.width, m.height, m.ready = 140, 40, true
+	m.connected = true
+	m.fullView = true
+
+	got := strings.Join(m.unitDetail(detailUnit(), 140), "\n")
+	for _, want := range []string{
+		"caddy", "running", "Caddy web server", // identity
+		"pid 1314", "restarts 2", "tasks 22", // lifecycle
+		"18.9%", "76M", // live
+		"type notify", "enabled", "restart on-failure", "user caddy", // configuration
+		"triggered by caddy.socket",
+		"serving 4 sites",                   // what it says about itself
+		"caddy run --config",                // what it runs
+		"/etc/systemd/system/caddy.service", // where it is defined
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("detail is missing %q:\n%s", want, got)
+		}
+	}
+
+	// A default Restart=no is not worth a line, nor is the default slice.
+	plain := detailUnit()
+	plain.RestartPol, plain.Slice, plain.User = "no", "system.slice", ""
+	quiet := strings.Join(m.unitDetail(plain, 140), "\n")
+	for _, noise := range []string{"restart no", "slice system", "user "} {
+		if strings.Contains(quiet, noise) {
+			t.Errorf("detail should not spell out the default %q:\n%s", noise, quiet)
+		}
+	}
+}
+
+// Every line must fit its pane, and the pane must get exactly the number of
+// lines the geometry promised.
+func TestUnitDetailFitsItsPane(t *testing.T) {
+	for _, tc := range []struct{ w, h int }{{140, 40}, {100, 24}, {90, 18}, {84, 12}} {
+		for _, full := range []bool{false, true} {
+			m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
+			m.width, m.height, m.ready = tc.w, tc.h, true
+			m.connected = true
+			m.fullView = full
+			m.units = []Unit{detailUnit()}
+			m.rebuild()
+
+			w := m.logPaneWidth()
+			for i, line := range m.unitDetail(detailUnit(), w) {
+				if lipglossWidth(line) > w {
+					t.Errorf("%dx%d full=%v: detail line %d is %d wide, pane is %d",
+						tc.w, tc.h, full, i, lipglossWidth(line), w)
+				}
+			}
+
+			pane := m.viewLogPane(w, m.contentHeight())
+			if len(pane) < m.detailHeight() {
+				t.Errorf("%dx%d full=%v: pane has %d lines, detail alone needs %d",
+					tc.w, tc.h, full, len(pane), m.detailHeight())
+			}
+			// The rule sits immediately under the detail block.
+			if rule := pane[m.detailHeight()-1]; !strings.Contains(stripANSI(rule), "─") {
+				t.Errorf("%dx%d full=%v: no rule under the detail block, got %q",
+					tc.w, tc.h, full, stripANSI(rule))
+			}
+			if n := strings.Count(m.View(), "\n"); n != tc.h-1 {
+				t.Errorf("%dx%d full=%v: frame is %d lines", tc.w, tc.h, full, n+1)
+			}
+		}
+	}
+}
+
+// A narrow pane cannot fit the lifecycle facts beside the name; they must not
+// simply disappear.
+func TestNarrowPaneKeepsTheLifecycleLine(t *testing.T) {
+	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
+	m.width, m.height, m.ready = 130, 32, true
+	m.connected = true
+
+	narrow := strings.Join(m.unitDetail(detailUnit(), 55), "\n")
+	for _, want := range []string{"pid 1314", "up 2h00m", "tasks 22"} {
+		if !strings.Contains(narrow, want) {
+			t.Errorf("narrow pane lost %q:\n%s", want, narrow)
+		}
+	}
+	wide := strings.Join(m.unitDetail(detailUnit(), 130), "\n")
+	if !strings.Contains(wide, "pid 1314") {
+		t.Errorf("wide pane lost the lifecycle facts:\n%s", wide)
+	}
+}
+
+// TasksMax defaults to tens of thousands, which says nothing.
+func TestTasksLimitOnlyShownWhenItMeansSomething(t *testing.T) {
+	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
+
+	def := detailUnit()
+	def.Tasks, def.TasksLimit = 22, 35789 // the systemd default
+	if got := strings.Join(m.unitStats(def), " "); strings.Contains(got, "35789") {
+		t.Errorf("the default TasksMax should stay quiet: %s", got)
+	}
+
+	tight := detailUnit()
+	tight.Tasks, tight.TasksLimit = 22, 64 // deliberately lowered
+	if got := strings.Join(m.unitStats(tight), " "); !strings.Contains(got, "22/64") {
+		t.Errorf("a configured TasksMax should be shown: %s", got)
+	}
+
+	near := detailUnit()
+	near.Tasks, near.TasksLimit = 34000, 35789 // about to hit it
+	if got := strings.Join(m.unitStats(near), " "); !strings.Contains(got, "/35789") {
+		t.Errorf("a limit being approached should be shown: %s", got)
+	}
+
+	// MemoryMax=infinity parses as unset and must not print.
+	inf := detailUnit()
+	inf.MemMax = unsetU64
+	if got := m.unitLive(inf); strings.Contains(got, "/") && strings.Contains(got, "mem") {
+		if strings.Contains(strings.SplitN(got, "·", 3)[1], "/") {
+			t.Errorf("an unset MemoryMax should not print a fraction: %s", got)
+		}
 	}
 }

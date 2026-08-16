@@ -56,9 +56,25 @@ func (m model) listRows() int {
 	return max(1, m.contentHeight()-2)
 }
 
-// detailHeight is the unit summary above the log: title, description, stats,
-// and the rule under them.
-func (m model) detailHeight() int { return 4 }
+// detailLines is how much of the unit description fits above the log. The full
+// view has the room for all of it; the side pane trades against the log and
+// gives ground first on a short terminal.
+func (m model) detailLines() int {
+	if m.fullView {
+		return 7
+	}
+	switch {
+	case m.contentHeight() >= 24:
+		return 6
+	case m.contentHeight() >= 16:
+		return 4
+	default:
+		return 3
+	}
+}
+
+// detailHeight is the description block plus the rule under it.
+func (m model) detailHeight() int { return m.detailLines() + 1 }
 
 func (m model) logHeight() int {
 	return max(1, m.contentHeight()-m.detailHeight())
@@ -679,28 +695,86 @@ func (m model) viewLogPane(width, height int) []string {
 		return append(out, stBorder.Render(strings.Repeat("─", width)))
 	}
 
-	if m.fullView {
-		out = append(out, m.viewUnitFull(u, width)...)
-	} else {
-		out = append(out, m.viewUnitSummary(u, width)...)
+	detail := m.unitDetail(u, width)
+	for len(detail) < m.detailLines() {
+		detail = append(detail, "")
 	}
+	out = append(out, detail[:m.detailLines()]...)
 	out = append(out, stBorder.Render(strings.Repeat("─", width)))
 	return append(out, m.renderLogWindow(width, m.logHeight())...)
 }
 
-// viewUnitFull is the full-view header. It has the width to put the identity
-// on the left, the lifecycle facts on the right, and a line of live counters
-// underneath — the same numbers the table shows, for the unit whose log has
-// taken over the screen.
-func (m model) viewUnitFull(u Unit, width int) []string {
-	title := lipgloss.NewStyle().Foreground(stateColor(u)).Bold(true).Render(shortUnit(u.Name))
+// unitDetail describes the selected service, most useful first, so a short
+// pane can simply take the first few lines. The full view has room for all of
+// it; the side pane takes what fits beside the table.
+func (m model) unitDetail(u Unit, width int) []string {
+	title := lipgloss.NewStyle().Foreground(stateColor(u)).Bold(true).
+		Render(truncRunes(shortUnit(u.Name), max(1, width/2)))
 	title += "  " + stateText(u)
 
-	return []string{
-		hjoin(width, title, stSubtle.Render(strings.Join(m.unitStats(u), " · "))),
-		stSubtle.Render(truncRunes(u.Desc, width)),
-		truncANSI(m.unitLive(u), width),
+	// Wide enough, the lifecycle facts sit opposite the name; in a narrow pane
+	// hjoin would drop them entirely, so they get a line of their own.
+	stats := stSubtle.Render(strings.Join(m.unitStats(u), " · "))
+	lines := []string{truncANSI(title, width), stSubtle.Render(truncRunes(u.Desc, width))}
+	if width >= 90 {
+		lines[0] = hjoin(width, title, stats)
+	} else {
+		lines = append(lines, truncANSI(stats, width))
 	}
+	lines = append(lines, truncANSI(m.unitLive(u), width))
+
+	// How it is configured: enough to answer "will this come back on its own,
+	// and does it start at boot".
+	var cfg []string
+	if u.Type != "" {
+		cfg = append(cfg, stSubtle.Render("type ")+stBase.Render(u.Type))
+	}
+	if u.FileState != "" {
+		cfg = append(cfg, fileStateStyle(u.FileState).Render(u.FileState))
+	}
+	if u.RestartPol != "" && u.RestartPol != "no" {
+		cfg = append(cfg, stSubtle.Render("restart ")+stBase.Render(u.RestartPol))
+	}
+	if u.User != "" {
+		cfg = append(cfg, stSubtle.Render("user ")+stBase.Render(u.User))
+	}
+	if u.Slice != "" && u.Slice != "system.slice" {
+		cfg = append(cfg, stSubtle.Render("slice ")+stBase.Render(sliceLabel(u.Slice)))
+	}
+	if u.TriggeredBy != "" {
+		by := strings.Fields(u.TriggeredBy)
+		cfg = append(cfg, stSubtle.Render("triggered by ")+stBase.Render(shortUnit(by[0])))
+	}
+	if len(cfg) > 0 {
+		lines = append(lines, truncANSI(strings.Join(cfg, stFaint.Render(" · ")), width))
+	}
+
+	// What it actually runs, and what it says about itself.
+	if u.StatusText != "" {
+		lines = append(lines, truncANSI(stSubtle.Render("status ")+
+			lipgloss.NewStyle().Foreground(colTeal).Render(u.StatusText), width))
+	}
+	if u.ExecStart != "" {
+		lines = append(lines, truncANSI(stSubtle.Render("exec ")+stFaint.Render(u.ExecStart), width))
+	}
+	if u.Fragment != "" {
+		lines = append(lines, truncANSI(stFaint.Render(u.Fragment), width))
+	}
+	return lines
+}
+
+// fileStateStyle flags the states worth noticing: a masked or disabled unit
+// will not come back on its own.
+func fileStateStyle(s string) lipgloss.Style {
+	switch s {
+	case "masked", "masked-runtime":
+		return lipgloss.NewStyle().Foreground(colRed).Bold(true)
+	case "disabled":
+		return lipgloss.NewStyle().Foreground(colPeach)
+	case "enabled", "enabled-runtime":
+		return lipgloss.NewStyle().Foreground(colGreen)
+	}
+	return stSubtle
 }
 
 // stateText names the state and keeps systemd's own wording alongside when the
@@ -732,6 +806,10 @@ func (m model) unitLive(u Unit) string {
 	}
 	if u.MemCurrent != unsetU64 {
 		mem = humanBytes(u.MemCurrent)
+		// A MemoryMax= turns the number into a fraction of something.
+		if u.MemMax != unsetU64 {
+			mem += "/" + humanBytes(u.MemMax)
+		}
 	}
 	parts := []string{
 		field("cpu", cpu, heat(u.CPUPct, 1, 20, 60, 150)),
@@ -751,18 +829,6 @@ func (m model) unitLive(u Unit) string {
 			"↓"+humanRateFull(u.IORRate)+" ↑"+humanRateFull(u.IOWRate), colBlue))
 	}
 	return strings.Join(parts, stFaint.Render(" · "))
-}
-
-// viewUnitSummary is the three-line header above the log.
-func (m model) viewUnitSummary(u Unit, width int) []string {
-	title := lipgloss.NewStyle().Foreground(stateColor(u)).Bold(true).
-		Render(truncRunes(shortUnit(u.Name), max(1, width-16)))
-	title += "  " + stateText(u)
-	return []string{
-		truncANSI(title, width),
-		stSubtle.Render(truncRunes(u.Desc, width)),
-		truncANSI(stSubtle.Render(strings.Join(m.unitStats(u), " · ")), width),
-	}
 }
 
 func (m model) unitStats(u Unit) []string {
@@ -787,7 +853,15 @@ func (m model) unitStats(u Unit) []string {
 		stats = append(stats, "up "+humanDur(time.Since(u.ActiveSince)))
 	}
 	if u.Tasks != unsetU64 {
-		stats = append(stats, fmt.Sprintf("tasks %d", u.Tasks))
+		tasks := fmt.Sprintf("tasks %d", u.Tasks)
+		// The default TasksMax is in the tens of thousands and tells you
+		// nothing. Show it only when it was deliberately lowered, or when the
+		// unit is close enough to it to matter.
+		if lim := u.TasksLimit; lim != unsetU64 && lim > 0 &&
+			(lim < 4096 || u.Tasks*5 >= lim*4) {
+			tasks += "/" + humanCount(lim)
+		}
+		stats = append(stats, tasks)
 	}
 	// In the full view the live line already says "net off".
 	if !u.IPAccount && !m.fullView {

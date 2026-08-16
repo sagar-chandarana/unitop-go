@@ -8,6 +8,23 @@ to change.
 
 ## [Unreleased]
 
+### Added
+
+- The side pane and full view describe the service, not just name it. Alongside
+  the existing pid, uptime, tasks, restarts and live counters they now show
+  `type`, whether the unit is `enabled` (masked and disabled are flagged), its
+  restart policy, the user and slice it runs in, the socket or timer that
+  triggers it, whatever it reports of itself through `sd_notify`, the command
+  it actually runs, and the unit file it came from.
+- `MemoryMax` and a deliberately lowered `TasksMax` appear beside the current
+  values, so `mem 76M/512M` says what the number is a fraction of. The default
+  `TasksMax` — tens of thousands — stays hidden, as it means nothing.
+
+### Changed
+
+- The side pane grows its detail block on a tall terminal and shrinks it on a
+  short one, giving ground to the log first.
+
 ## [0.1.3] — 2026-08-14
 
 ### Fixed

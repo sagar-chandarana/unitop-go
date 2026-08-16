@@ -160,8 +160,15 @@ toggles it, and a **right click on a unit** opens the action menu.
 
 ## Full view
 
-`enter` on a unit drops the table and gives that unit's log the whole width,
-with its live counters kept above. `esc`, or `enter` again, goes back.
+`enter` on a unit drops the table and gives that unit's log the whole width.
+Above it sits everything worth knowing about the service: pid, uptime, tasks
+and restarts; live CPU, memory, network and I/O; how it is configured (`type`,
+whether it is `enabled`, its restart policy, the user and slice it runs in,
+what socket or timer triggers it); whatever it reports of itself through
+`sd_notify`; the command it actually runs; and the unit file it came from.
+`esc`, or `enter` again, goes back.
+
+The side pane shows as much of the same as fits beside the table.
 
 ![full view](docs/full.png)
 
