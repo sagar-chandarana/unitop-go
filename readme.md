@@ -234,6 +234,26 @@ which calls four different situations `dead`:
   for a password. It opens one multiplexed connection and reuses it for every
   poll and the log tail.
 
+## How it polls
+
+A poll is two commands, whatever the host's size: one that lists the units (and,
+remotely, dumps `/proc` in the same shell), and one batched
+`systemctl show` that fetches every property for every unit at once. Remotely
+that is two ssh round trips over a single multiplexed connection. Logs are a
+separate long-lived `journalctl -f -o json`, restarted only when the selection
+changes.
+
+The cost is dominated by systemd itself, not by the process spawn: on a
+129-unit host, `systemctl show` takes ~216 ms for identity and state alone, and
+~230 ms for all thirty-odd properties unitop asks for. **A whole poll is
+~265 ms there**, so the bottom of the `-i` range is already saturated on a busy
+machine — a tick is skipped while a poll is still in flight, so unitop simply
+refreshes as fast as it can rather than piling requests up.
+
+systemd's D-Bus API was measured as an alternative and came out ~1.7× faster,
+which does not pay for the second code path it would need: it is a local unix
+socket, so `-H` would still shell out, and the journal would too.
+
 ## Development
 
 ```sh

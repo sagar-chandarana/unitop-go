@@ -16,6 +16,7 @@
 - [Verifying the TUI needs a pty, and frames arrive as diffs](feedback_verify_tui_with_pty.md) — the `script` recipe plus why captured output looks like overlapping half-screens
 - [Go + nix loop: vendor, git add, then build](feedback_go_nix_workflow.md) — `nix build` also runs the tests, in a sandbox with no systemd/network
 - [Remote poll is one shell line and two ssh round trips](project_remote_poll.md) — a `#` in the marker once silently emptied the unit list
+- [Why exec and not D-Bus, with the measurements](project_dbus_vs_exec.md) — 1.7× at best, the journal and `-H` both still need exec; a poll costs ~265ms so `-i 250ms` is already saturated
 
 ## Reference
 

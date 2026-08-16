@@ -159,6 +159,19 @@ These are decisions, not accidents. Change them deliberately, not incidentally.
   Both light and dark terminals are supported via `lipgloss.AdaptiveColor` —
   don't hardcode a colour.
 
+**Talking to systemd**
+
+- **Shelling out to `systemctl` is a measured decision, not laziness.** systemd's
+  D-Bus API was benchmarked: ~1.7× faster at best, because the cost is systemd
+  computing the properties (216 ms of a 265 ms poll is the floor for touching
+  129 units at all), and both the journal and `-H` would still need exec. The
+  numbers and the one thing that would justify switching — `Subscribe()` for
+  event-driven state — are in
+  `.claude/memory/project_dbus_vs_exec.md`. Read it before "optimising" this.
+- **A poll costs ~265 ms on a 129-unit host**, so the low end of `-i` is already
+  saturated. `m.polling` skips a tick while one is in flight, so it degrades to
+  "as fast as it can" instead of piling up.
+
 **Correctness**
 
 - **A counter going backwards is a restart, not a spike.** `rate()` returns 0.
