@@ -108,9 +108,12 @@ type model struct {
 
 	filter      string
 	filterInput bool
-	showAll     bool
-	tree        bool
-	collapsed   map[string]bool
+	// filterWas is what the editor is amending, so esc can put it back rather
+	// than throw it away.
+	filterWas string
+	showAll   bool
+	tree      bool
+	collapsed map[string]bool
 
 	sortBy  sortKey
 	reverse bool
@@ -139,11 +142,14 @@ type model struct {
 	toastErr bool
 	toastSeq int
 
-	focus  focusArea
-	help   bool
-	width  int
-	height int
-	ready  bool
+	focus focusArea
+	help  bool
+	// helpScroll: the help is longer than a small terminal is tall, so it
+	// scrolls rather than losing its last group off the bottom.
+	helpScroll int
+	width      int
+	height     int
+	ready      bool
 }
 
 func newModel(r runner, hostLabel string, interval time.Duration, sortBy sortKey, reverse, showAll, tree bool, filter string) model {
@@ -342,8 +348,12 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			m.filterInput = false
 		case tea.KeyEsc:
+			// Cancel, not clear. Amending an applied filter and thinking
+			// better of it used to throw the filter away rather than put it
+			// back. Escaping again clears it, which is the next thing on the
+			// stack.
 			m.filterInput = false
-			*text = ""
+			*text = m.filterWas
 		case tea.KeyBackspace:
 			if r := []rune(*text); len(r) > 0 {
 				*text = string(r[:len(r)-1])
@@ -384,22 +394,10 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "?":
 		m.help = !m.help
+		m.helpScroll = 0 // it always opens at the top
 		return m, nil
 	case "esc":
-		if m.help {
-			m.help = false
-		} else if m.filter != "" {
-			m.filter = ""
-			m.rebuild()
-			return m, m.syncJournal()
-		} else if m.fullView {
-			m.fullView = false
-			m.focus = focusList
-			return m, m.syncJournal()
-		} else if m.focus == focusLogs {
-			m.focus = focusList
-		}
-		return m, nil
+		return m, m.escape()
 	case "tab":
 		if m.logPaneVisible() {
 			if m.focus == focusList {
@@ -411,7 +409,11 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "/":
 		// Filter whatever has focus: the log when reading it, else the table.
-		m.filterLogs = m.fullView || m.focus == focusLogs
+		m.filterLogs = m.logHasFocus()
+		m.filterWas = m.filter
+		if m.filterLogs {
+			m.filterWas = m.logFilt.grep
+		}
 		m.filterInput = true
 		m.help = false
 		return m, nil
@@ -479,10 +481,77 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// The help covers the panes, so the motion keys move it rather than
+	// whatever is underneath — scrolling a table you cannot see is no use.
+	if m.help {
+		m.helpKey(msg.String())
+		return m, nil
+	}
 	if m.focus == focusLogs {
 		return m, m.logKey(msg.String())
 	}
 	return m, m.listKey(msg.String())
+}
+
+// helpKey scrolls the help, using the same motion keys as everything else.
+func (m *model) helpKey(k string) {
+	page := max(1, m.contentHeight()-1)
+	switch k {
+	case "up":
+		m.helpScroll--
+	case "down":
+		m.helpScroll++
+	case "pgup":
+		m.helpScroll -= page
+	case "pgdown":
+		m.helpScroll += page
+	case "home":
+		m.helpScroll = 0
+	case "end":
+		m.helpScroll = m.helpScrollMax()
+	default:
+		return
+	}
+	m.helpScroll = min(max(m.helpScroll, 0), m.helpScrollMax())
+}
+
+// logHasFocus is the rule that decides which pane a key belonging to neither
+// acts on: `/` filters that pane, esc clears that pane's filter. The full view
+// is the log and nothing else, so it counts.
+func (m model) logHasFocus() bool {
+	return m.logPaneVisible() && (m.fullView || m.focus == focusLogs)
+}
+
+// escape pops exactly one thing, innermost first. The two modal layers — the
+// filter editor and the action menu — are handled before this, so what is left
+// is: the help overlay, then whatever is narrowing the pane you are looking at,
+// then the full view, then focus.
+//
+// It clears the *focused* pane's filter, not always the table's. Clearing the
+// table's from inside the full view threw away something not on screen and left
+// you still in the full view; and an applied log search could not be cleared at
+// all, because the cascade only ever looked at the unit filter.
+func (m *model) escape() tea.Cmd {
+	switch {
+	case m.help:
+		m.help = false
+	case m.logHasFocus() && !m.logFilt.empty():
+		// The pane's title advertises the search and the level as one thing,
+		// so esc undoes it as one thing; `e` puts a level back in one press.
+		m.logFilt = logFilter{}
+		return m.syncJournal()
+	case !m.logHasFocus() && m.filter != "":
+		m.filter = ""
+		m.rebuild()
+		return m.syncJournal()
+	case m.fullView:
+		m.fullView = false
+		m.focus = focusList
+		return m.syncJournal()
+	case m.focus == focusLogs:
+		m.focus = focusList
+	}
+	return nil
 }
 
 // menuAnchor is where a keyboard-opened popup goes. In the table it points at

@@ -839,3 +839,50 @@ func TestTasksLimitOnlyShownWhenItMeansSomething(t *testing.T) {
 }
 
 func escKey() tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyEsc} }
+
+// The help must fit the screen it is drawn on. In two columns a row that runs
+// past its half wraps, and a wrapped line pushes everything below it down —
+// which is how the last group ends up off the bottom.
+func TestHelpFitsTheScreen(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {100, 30}, {120, 40}, {140, 30}, {150, 34}, {200, 50}} {
+		m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
+		m.width, m.height, m.ready = size[0], size[1], true
+		m.connected = true
+		m.units = testUnits()
+		m.rebuild()
+		m.help = true
+
+		// Every line, not only the ones currently in the window.
+		for i, l := range m.helpLines() {
+			if w := lipglossWidth(l); w > m.width {
+				t.Errorf("%dx%d: help line %d is %d wide: %q",
+					size[0], size[1], i, w, stripANSI(l))
+			}
+		}
+
+		lines := m.viewHelp()
+		if len(lines) != m.contentHeight() {
+			t.Errorf("%dx%d: help is %d lines, content area is %d",
+				size[0], size[1], len(lines), m.contentHeight())
+		}
+		for i, l := range lines {
+			if w := lipglossWidth(l); w > m.width {
+				t.Errorf("%dx%d: help line %d is %d wide: %q",
+					size[0], size[1], i, w, stripANSI(l))
+			}
+		}
+		// Quit is the last row of the last group; losing it is losing the way
+		// out. If it does not fit, the help must say there is more and scrolling
+		// must reach it.
+		shown := stripANSI(strings.Join(lines, "\n"))
+		if !strings.Contains(shown, "quit") {
+			if !strings.Contains(shown, "more below") {
+				t.Errorf("%dx%d: the last group is off screen and unannounced", size[0], size[1])
+			}
+			m.helpKey("end")
+			if !strings.Contains(stripANSI(strings.Join(m.viewHelp(), "\n")), "quit") {
+				t.Errorf("%dx%d: scrolling to the end does not reach the last group", size[0], size[1])
+			}
+		}
+	}
+}

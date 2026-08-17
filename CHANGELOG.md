@@ -63,6 +63,21 @@ to change.
   scroll position carried over, so the pane came up empty — and because follow
   was still off, every batch that arrived pushed the view further up instead
   of filling it in. The view can no longer float above the buffer at all.
+- **`esc` pops exactly one thing per press**, innermost first: cancel what you
+  are typing, close the menu or the help, clear the focused pane's filter,
+  leave the full view, return focus to the table. Three things fall out of
+  that. An applied log search could not be cleared at all — the cascade only
+  ever looked at the unit filter, so `esc` in the log pane did nothing.
+  Pressing it in the full view cleared the *table's* filter, something not on
+  screen, and left you still in the full view. And `esc` while typing threw the
+  filter away rather than restoring what you were amending, so thinking better
+  of an edit cost you the filter.
+- `esc` is documented. It did five things and had no line of its own anywhere.
+- The help scrolls when the terminal is too small for it — at 80×24 it used to
+  be cut off at the bottom, which took the last group with it, and the last
+  group is where quit lives. It says which way there is more, its own keys are
+  what the footer offers while it is open, and its notes wrap instead of
+  running off a narrow screen.
 - `F` and `f` are the log's two ends and belong to no other pane. `F` used to
   move the table cursor and the action menu as well, which made it the one
   letter bound to motion outside the log — and left it with a counterpart in

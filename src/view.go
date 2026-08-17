@@ -1219,6 +1219,16 @@ func (m model) confirmBox() []string {
 // keys that belong to the other pane are inert (see keyApplies), so offering
 // them would be a lie about what the next keystroke does.
 func (m model) footerKeys() [][2]string {
+	// The help covers both panes, so their keys are not what the next press
+	// does — the motion keys scroll the help instead.
+	if m.help {
+		keys := [][2]string{}
+		if m.helpScrollMax() > 0 {
+			keys = append(keys, [2]string{"↑↓", "scroll"})
+		}
+		return append(keys, [2]string{"?/esc", "close"}, [2]string{"q", "quit"})
+	}
+
 	keys := [][2]string{{"↑↓", "move"}}
 	if m.fullView {
 		keys = append(keys, [2]string{"enter/esc", "back"})
@@ -1319,20 +1329,24 @@ func (m model) viewFooter() string {
 	return line + sep + quit
 }
 
-// viewHelp groups the keys by the pane they belong to, because that is how
-// they behave: the focused pane, drawn in a heavy box, is the one taking them.
-func (m model) viewHelp() []string {
+// helpLines is the whole help, however tall that comes out. It groups the keys
+// by the pane they belong to, because that is how they behave: the focused
+// pane, drawn in a heavy box, is the one taking them.
+func (m model) helpLines() []string {
 	rows := [][2]string{
 		{"", "— either pane —"},
 		{"↑ ↓", "move the selection, or scroll the log when it has focus"},
 		{"pgup/pgdn", "page"},
 		{"home / end", "top / bottom"},
 		{"tab", "move focus between the unit list and the log"},
-		{"enter", "on a unit: full view (esc returns); on a slice: expand/collapse"},
+		{"enter", "on a unit: full view; on a slice: expand/collapse"},
 		{"x", "start / stop / restart / kill the selected unit"},
+		{"esc", "step back one thing per press, innermost first:"},
+		{"", "cancel what you are typing, close the menu or this help,"},
+		{"", "clear the focused pane's filter, leave the full view, unfocus"},
 		{"", ""},
 		{"", "— the unit list —"},
-		{"/", "show only units whose name or description contains the text"},
+		{"/", "show units whose name or description contains the text"},
 		{"s / S", "sort by the next / previous visible column"},
 		{"r", "reverse the sort"},
 		{"t", "tree view, grouped by slice"},
@@ -1342,12 +1356,12 @@ func (m model) viewHelp() []string {
 		{"right-click", "on a unit opens start/stop/restart/kill"},
 		{"", ""},
 		{"", "— the log —"},
-		{"/", "show only journal lines matching the text (a journalctl regex)"},
+		{"/", "show journal lines matching the text (journalctl regex)"},
 		{"e", "level: everything, warning and above, error and above"},
-		{"F / f", "top / bottom of the log — the only letters bound to motion"},
-		{"f", "the bottom is the live end, so f follows too; scrolling up stops it"},
+		{"F / f", "top / bottom — the only letters bound to motion"},
+		{"f", "the bottom is the live end, so f follows; scrolling up stops it"},
 		{"w", "wrap long lines"},
-		{"", "scrolling to the top loads the previous 500 journal entries"},
+		{"", "scroll to the top to load the previous 500 entries"},
 		{"", ""},
 		{"", "— anywhere —"},
 		{"l", "show or hide the log pane"},
@@ -1367,19 +1381,23 @@ func (m model) viewHelp() []string {
 			body = append(body, "  "+stKey.Render(padLeft(r[0], 11))+"  "+stBase.Render(r[1]))
 		}
 	}
-	notes := []string{"",
-		stSubtle.Render("  A key belonging to the other pane does nothing; the footer lists only what applies."),
-		stSubtle.Render("  CPU%, NET and IO are rates between polls; MEM is the current cgroup total."),
-		stSubtle.Render("  NET needs IPAccounting=yes on the unit (or DefaultIPAccounting=yes system-wide)."),
-		stSubtle.Render("  Reading logs needs membership of systemd-journal, or root."),
-		stSubtle.Render("  Unit actions need privilege: run as root, or pass -sudo for sudo -n."),
+	// Prose, so it wraps rather than running off a narrow screen.
+	notes := []string{""}
+	for _, n := range []string{
+		"A key belonging to the other pane does nothing; the footer lists only what applies.",
+		"CPU%, NET and IO are rates between polls; MEM is the current cgroup total.",
+		"NET needs IPAccounting=yes on the unit (or DefaultIPAccounting=yes system-wide).",
+		"Reading logs needs membership of systemd-journal, or root.",
+		"Unit actions need privilege: run as root, or pass -sudo for sudo -n.",
+	} {
+		for _, l := range wrapWords(n, max(20, m.width-4)) {
+			notes = append(notes, stSubtle.Render("  "+l))
+		}
 	}
 
 	out := []string{stHeader.Render("unitop — keys"), ""}
 	h := m.contentHeight()
-	// The keys come first and whole: the notes below them are worth losing to a
-	// short terminal, but cutting the key list would take the last group off the
-	// bottom, and that is where quit lives. Two columns buy the room to keep it.
+	// Two columns on a wide screen, which is usually enough to fit the lot.
 	if len(out)+len(body) > h && m.width >= 110 {
 		half := (len(body) + 1) / 2
 		for i := 0; i < half; i++ {
@@ -1392,22 +1410,46 @@ func (m model) viewHelp() []string {
 	} else {
 		out = append(out, body...)
 	}
-	for _, n := range notes {
-		if len(out) >= h {
-			break
-		}
-		out = append(out, n)
-	}
-	for len(out) < h {
-		out = append(out, "")
-	}
-	return out[:h]
+	return append(out, notes...)
 }
 
-// sideBySide places b at column w, cutting a if it would reach that far.
+// viewHelp windows the help onto the screen. On a terminal too small for all of
+// it — 80x24 is not unusual — it scrolls rather than being cut off at the
+// bottom, which took the last group with it, and the last group is where quit
+// lives.
+func (m model) viewHelp() []string {
+	all := m.helpLines()
+	h := m.contentHeight()
+	if len(all) <= h {
+		for len(all) < h {
+			all = append(all, "")
+		}
+		return all[:h]
+	}
+
+	start := min(max(m.helpScroll, 0), len(all)-h)
+	out := append([]string(nil), all[start:start+h]...)
+	// Say which way there is more, on a line of its own at the edge it is at.
+	if start > 0 {
+		out[0] = stFaint.Render("  ↑ more above")
+	}
+	if start+h < len(all) {
+		out[len(out)-1] = stFaint.Render("  ↓ more below — ↑↓ or pgup/pgdn to scroll")
+	}
+	return out
+}
+
+// helpScrollMax is how far the help can be scrolled, given the room it has.
+func (m model) helpScrollMax() int {
+	return max(0, len(m.helpLines())-m.contentHeight())
+}
+
+// sideBySide places b at column w. Both halves are cut to their own column:
+// the help rows are written to fit, but one long enough to run past the screen
+// would wrap, and a wrapped line pushes everything below it down a row.
 func sideBySide(w int, a, b string) string {
 	a = truncANSI(a, w-1)
-	return a + strings.Repeat(" ", max(1, w-lipgloss.Width(a))) + b
+	return a + strings.Repeat(" ", max(1, w-lipgloss.Width(a))) + truncANSI(b, w)
 }
 
 // truncANSI cuts a styled string to w visible columns.

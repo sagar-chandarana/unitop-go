@@ -134,6 +134,12 @@ These are decisions, not accidents. Change them deliberately, not incidentally.
   size; the focused box is heavy and coloured and the other light and faint. A
   single marker on the divider is not where anyone is looking, and a box that
   appears only when focused shifts the layout under the reader.
+- **`esc` pops one thing, innermost first, and never reaches past it.** The
+  order lives in `escape()`: editor, menu, help, the *focused pane's* filter,
+  the full view, focus. Two rules keep it honest — it clears the filter of the
+  pane you can see (clearing the table's from inside the full view threw away
+  something invisible), and in the editor it cancels rather than clears
+  (`filterWas`). Adding a mode means adding a rung, in the right place.
 - **A filter says what it does, in words.** Its pane's title carries `name or
   description contains "x"` or `matching "x", error and above` — not the flag
   that implements it. A filtered pane that stays silent reads as a quiet one.

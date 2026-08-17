@@ -141,8 +141,23 @@ are — so what is on screen is what the next keystroke will do.
 | --- | --- |
 | `↑` `↓`, `pgup`/`pgdn`, `home`/`end` | move; scrolls the log when it has focus |
 | `tab` | move focus between the table and the log |
-| `enter` | full view for a unit (`esc` back); expand/collapse a slice |
+| `enter` | full view for a unit; expand/collapse a slice |
 | `x` | start / stop / restart / kill the selected unit |
+| `esc` | step back one (see below) |
+
+`esc` pops exactly one thing per press, innermost first:
+
+1. cancel what you are typing — the filter goes back to what it was, it is not
+   thrown away
+2. close the action menu, or back out of its confirmation
+3. close this help
+4. clear the **focused pane's** filter — the unit filter from the table, the
+   search and level from the log
+5. leave the full view
+6. return focus to the table
+
+It never reaches past the first of those that applies, so nothing you cannot
+see gets cleared.
 
 **The unit list**
 
