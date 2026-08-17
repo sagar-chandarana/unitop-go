@@ -126,7 +126,7 @@ func (m *model) menuKey(k string) (bool, tea.Cmd) {
 		m.menu.cursor = (m.menu.cursor - 1 + len(unitActions)) % len(unitActions)
 	case "down":
 		m.menu.cursor = (m.menu.cursor + 1) % len(unitActions)
-	case "home", "F":
+	case "home":
 		m.menu.cursor = 0
 	case "end":
 		m.menu.cursor = len(unitActions) - 1

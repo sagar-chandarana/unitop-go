@@ -1219,7 +1219,7 @@ func (m model) confirmBox() []string {
 // keys that belong to the other pane are inert (see keyApplies), so offering
 // them would be a lie about what the next keystroke does.
 func (m model) footerKeys() [][2]string {
-	keys := [][2]string{{"↑↓", "move"}, {"F/end", "top/bottom"}}
+	keys := [][2]string{{"↑↓", "move"}}
 	if m.fullView {
 		keys = append(keys, [2]string{"enter/esc", "back"})
 	} else {
@@ -1230,6 +1230,7 @@ func (m model) footerKeys() [][2]string {
 	if m.focus == focusLogs && m.logPaneVisible() {
 		keys = append(keys,
 			[2]string{"/", "search log"},
+			[2]string{"F/f", "top/bottom"},
 			[2]string{"e", "level"},
 			[2]string{"f", "follow"},
 			[2]string{"w", "wrap"})
@@ -1325,7 +1326,7 @@ func (m model) viewHelp() []string {
 		{"", "— either pane —"},
 		{"↑ ↓", "move the selection, or scroll the log when it has focus"},
 		{"pgup/pgdn", "page"},
-		{"F / end", "top / bottom (home works too)"},
+		{"home / end", "top / bottom"},
 		{"tab", "move focus between the unit list and the log"},
 		{"enter", "on a unit: full view (esc returns); on a slice: expand/collapse"},
 		{"x", "start / stop / restart / kill the selected unit"},
@@ -1343,7 +1344,8 @@ func (m model) viewHelp() []string {
 		{"", "— the log —"},
 		{"/", "show only journal lines matching the text (a journalctl regex)"},
 		{"e", "level: everything, warning and above, error and above"},
-		{"f", "follow (auto-scroll); scrolling up turns it off"},
+		{"F / f", "top / bottom of the log — the only letters bound to motion"},
+		{"f", "the bottom is the live end, so f follows too; scrolling up stops it"},
 		{"w", "wrap long lines"},
 		{"", "scrolling to the top loads the previous 500 journal entries"},
 		{"", ""},

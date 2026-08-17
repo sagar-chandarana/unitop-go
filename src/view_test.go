@@ -466,7 +466,7 @@ func TestEnterOnSliceDoesNotOpenFullView(t *testing.T) {
 }
 
 var allFooterHints = []string{
-	"↑↓ move", "F/end top/bottom", "enter full view", "enter/esc back", "x actions", "tab focus",
+	"↑↓ move", "F/f top/bottom", "enter full view", "enter/esc back", "x actions", "tab focus",
 	"s sort", "r rev", "t tree", "/ filter units", "/ search log", "a all",
 	"f follow", "f follow off",
 	"e level", "w wrap", "l log", "? help", "q quit",

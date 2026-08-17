@@ -40,7 +40,8 @@ var (
 		"a": true, // include inactive
 	}
 	logKeys = map[string]bool{
-		"f": true, // follow
+		"f": true, // follow — which is the live end, so it is also the bottom
+		"F": true, // the other end
 		"e": true, // priority
 		"w": true, // wrap
 	}
@@ -518,11 +519,11 @@ func (m *model) activateRow() tea.Cmd {
 }
 
 // listKey moves the table cursor: arrows by a line, PgUp/PgDn by a page, Home
-// or F to the top, End to the bottom. One key per motion. The vim aliases
+// and End to the ends. One key per motion, and all of them named keys — the
+// letters belong to the log, where F and f are its two ends. The vim aliases
 // (hjkl, g/G) and the readline ones (ctrl+b/ctrl+f) each gave a second and
-// third way to say what the arrows already say, and every letter they held is a
-// letter unavailable for a command — ctrl+f in particular fought the f that
-// follows the log.
+// third way to say what the arrows already say, and every letter they held is
+// a letter unavailable for a command.
 func (m *model) listKey(k string) tea.Cmd {
 	page := max(1, m.listRows()-1)
 	switch k {
@@ -534,7 +535,7 @@ func (m *model) listKey(k string) tea.Cmd {
 		m.cursor -= page
 	case "pgdown":
 		m.cursor += page
-	case "home", "F":
+	case "home":
 		m.cursor = 0
 	case "end":
 		m.cursor = len(m.rows) - 1
@@ -627,6 +628,10 @@ func (m *model) loadOlder() tea.Cmd {
 
 const scrollToEnd = 1 << 30 // clamped to the real limit by clampLogScroll
 
+// logKey scrolls the log. F and f are its two ends — F to the top, f to the
+// live end, which is what following means. They are the only letters bound to
+// motion anywhere, and they are bound here because this is the only pane with
+// two ends worth naming: the table's are just Home and End.
 func (m *model) logKey(k string) tea.Cmd {
 	page := max(1, m.logHeight()-1)
 	switch k {

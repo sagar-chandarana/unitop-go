@@ -139,7 +139,7 @@ are — so what is on screen is what the next keystroke will do.
 
 | key | action |
 | --- | --- |
-| `↑` `↓`, `pgup`/`pgdn`, `F`/`end` | move; scrolls the log when it has focus |
+| `↑` `↓`, `pgup`/`pgdn`, `home`/`end` | move; scrolls the log when it has focus |
 | `tab` | move focus between the table and the log |
 | `enter` | full view for a unit (`esc` back); expand/collapse a slice |
 | `x` | start / stop / restart / kill the selected unit |
@@ -161,8 +161,13 @@ are — so what is on screen is what the next keystroke will do.
 | --- | --- |
 | `/` | show only journal lines matching the text (a `journalctl` regex) |
 | `e` | level: everything → warning and above → error and above |
-| `f` | follow; scrolling up turns it off |
+| `F` / `f` | top / bottom of the log |
+| `f` | the bottom is the live end, so `f` follows too; scrolling up stops it |
 | `w` | wrap long lines |
+
+`F` and `f` are the only letters bound to motion anywhere, and they are the
+log's because it is the only pane with two ends worth naming — the table's are
+just `home` and `end`.
 
 **Anywhere**
 

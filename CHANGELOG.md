@@ -63,7 +63,12 @@ to change.
   scroll position carried over, so the pane came up empty — and because follow
   was still off, every batch that arrived pushed the view further up instead
   of filling it in. The view can no longer float above the buffer at all.
-- `F`/`end` are named in the footer; they were bound but never advertised.
+- `F` and `f` are the log's two ends and belong to no other pane. `F` used to
+  move the table cursor and the action menu as well, which made it the one
+  letter bound to motion outside the log — and left it with a counterpart in
+  the log (`f`) but none in the table. The table's ends are `home` and `end`,
+  as they always were. Both are named in the log's footer, which never
+  advertised them.
 - The action popup stays inside the pane it belongs to instead of overrunning
   the bottom of the list onto the footer.
 - Rows in the table no longer turn bold at random. An error-priority line in

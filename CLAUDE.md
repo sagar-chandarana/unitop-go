@@ -124,9 +124,12 @@ These are decisions, not accidents. Change them deliberately, not incidentally.
   `footerKeys()` consult — they must never disagree. Anything anchored to a
   table row needs a second answer for the full view — see `menuAnchor()`, which
   otherwise put the popup wherever the invisible cursor happened to be.
-- **One key per motion.** The vim and readline aliases were removed on purpose:
-  every letter an alias holds is a letter unavailable for a command, and each
-  one is a second thing to document and keep working.
+- **One key per motion, and motion is named keys.** The vim and readline
+  aliases were removed on purpose: every letter an alias holds is a letter
+  unavailable for a command, and each one is a second thing to document and
+  keep working. `F`/`f` are the single exception — the log's two ends, bound
+  there because it is the only pane with ends worth naming, and inert
+  everywhere else. Do not re-bind either outside `logKeys`.
 - **Focus is drawn on the whole pane.** Both panes are always boxed, at the same
   size; the focused box is heavy and coloured and the other light and faint. A
   single marker on the divider is not where anyone is looking, and a box that

@@ -25,13 +25,18 @@ func focusModel(t *testing.T) *model {
 func TestKeysBelongToTheFocusedPane(t *testing.T) {
 	m := focusModel(t)
 
-	// Table focused: the log's own keys are inert.
-	follow, wrap, prio := m.logFollow, m.logWrap, m.logFilt.prio
-	for _, k := range []string{"f", "e", "w"} {
+	// Table focused: the log's own keys are inert — including F and f, which
+	// are the log's two ends and belong to no other pane.
+	follow, wrap, prio, scroll := m.logFollow, m.logWrap, m.logFilt.prio, m.logScroll
+	cursor := m.cursor
+	for _, k := range []string{"f", "F", "e", "w"} {
 		m.handleKey(keyOf(k))
 	}
-	if m.logFollow != follow || m.logWrap != wrap || m.logFilt.prio != prio {
+	if m.logFollow != follow || m.logWrap != wrap || m.logFilt.prio != prio || m.logScroll != scroll {
 		t.Error("log keys acted while the table had focus")
+	}
+	if m.cursor != cursor {
+		t.Errorf("a log key moved the table cursor: %d -> %d", cursor, m.cursor)
 	}
 
 	// Log focused: the table's are.
@@ -72,7 +77,7 @@ func TestFooterFollowsTheFocus(t *testing.T) {
 			t.Errorf("table footer is missing %q: %s", want, foot)
 		}
 	}
-	for _, gone := range []string{"f follow", "e level", "w wrap", "/ search"} {
+	for _, gone := range []string{"f follow", "F/f top", "e level", "w wrap", "/ search"} {
 		if strings.Contains(foot, gone) {
 			t.Errorf("table footer offers the log's %q: %s", gone, foot)
 		}
@@ -80,7 +85,7 @@ func TestFooterFollowsTheFocus(t *testing.T) {
 
 	m.focus = focusLogs
 	foot = stripANSI(m.viewFooter())
-	for _, want := range []string{"/ search log", "e level", "f follow", "w wrap"} {
+	for _, want := range []string{"/ search log", "F/f top/bottom", "e level", "f follow", "w wrap"} {
 		if !strings.Contains(foot, want) {
 			t.Errorf("log footer is missing %q: %s", want, foot)
 		}
@@ -92,7 +97,7 @@ func TestFooterFollowsTheFocus(t *testing.T) {
 	}
 
 	// Every hint offered must actually be live, and every live key offered.
-	for _, k := range []string{"f", "e", "w"} {
+	for _, k := range []string{"f", "F", "e", "w"} {
 		if !m.keyApplies(k) {
 			t.Errorf("%q is offered but inert", k)
 		}

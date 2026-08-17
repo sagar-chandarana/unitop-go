@@ -285,13 +285,14 @@ func TestMotionKeysHaveOneMeaningEach(t *testing.T) {
 
 	m.focus = focusList
 	m.cursor = 3
-	m.listKey("F")
+	m.listKey("home")
 	if m.cursor != 0 {
-		t.Errorf("F did not go to the top of the table: cursor = %d", m.cursor)
+		t.Errorf("home did not go to the top of the table: cursor = %d", m.cursor)
 	}
 
+	// F and f are the log's two ends, and belong to no other pane.
 	m.cursor = 3
-	for _, k := range []string{"j", "k", "h", "g", "G", "ctrl+b", "ctrl+f"} {
+	for _, k := range []string{"F", "f", "j", "k", "h", "g", "G", "ctrl+b", "ctrl+f"} {
 		m.listKey(k)
 		if m.cursor != 3 {
 			t.Errorf("%q still moves the cursor; it was removed", k)
