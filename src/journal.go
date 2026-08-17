@@ -100,7 +100,7 @@ func fetchOlder(parent context.Context, r runner, unit, cursor string, f logFilt
 		}, f.args()...)
 		out, err := r.command(ctx, "journalctl", args...).Output()
 		if err != nil {
-			return olderBatch{gen: gen, err: wrapExec(err).Error()}
+			return olderBatch{gen: gen, err: sanitizeText(wrapExec(err).Error())}
 		}
 
 		var newestFirst []logLine
@@ -211,7 +211,7 @@ func startJournal(parent context.Context, r runner, unit string, f logFilter, ba
 		}
 		flush()
 		_ = cmd.Wait()
-		msg := strings.TrimSpace(stderr.String())
+		msg := sanitizeText(strings.TrimSpace(stderr.String()))
 		if msg == "" {
 			msg = "journal stream ended"
 		}
@@ -224,6 +224,7 @@ func startJournal(parent context.Context, r runner, unit string, f logFilter, ba
 }
 
 func emitMeta(ctx context.Context, ch chan journalBatch, gen int, msg string) {
+	msg = sanitizeText(msg)
 	select {
 	case ch <- journalBatch{gen: gen, lines: []logLine{{ts: time.Now(), prio: 3, msg: msg, meta: true}}, done: true}:
 	case <-ctx.Done():
@@ -249,12 +250,14 @@ func parseJournalJSON(b []byte) (logLine, bool) {
 		if s == "" {
 			return logLine{}, false
 		}
-		return logLine{ts: time.Now(), prio: 6, msg: s, meta: true}, true
+		return logLine{ts: time.Now(), prio: 6, msg: sanitizeMessage(s), meta: true}, true
 	}
 	l := logLine{prio: 6}
-	l.msg = jsonField(e.Message)
-	l.ident = jsonField(e.Ident)
-	l.pid = jsonField(e.PID)
+	// Everything here is whatever the service wrote. See sanitize.go: raw, it
+	// can move the cursor and repaint the screen.
+	l.msg = sanitizeMessage(jsonField(e.Message))
+	l.ident = sanitizeText(jsonField(e.Ident))
+	l.pid = sanitizeText(jsonField(e.PID))
 	l.cursor = jsonField(e.Cursor)
 	if p := jsonField(e.Priority); p != "" {
 		if n, err := strconv.Atoi(p); err == nil {

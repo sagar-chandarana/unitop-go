@@ -233,6 +233,12 @@ older, and otherwise that more exists and scrolling will load it.
 Paging uses journald cursors, so pages join exactly — no duplicated or skipped
 entries. Switching units starts over.
 
+Log text is sanitised before it is drawn. A journal message is arbitrary bytes,
+and a service can put escape sequences in its own log — left alone they move
+the cursor and repaint the screen. Escape sequences are dropped, other control
+bytes are shown as their Unicode pictures (`␇`, `␡`), carriage returns become
+the line breaks they meant, and a multi-line entry stays multi-line.
+
 `/` with the log focused searches it, and `e` cycles the level shown
 (everything → warning and above → error and above). Both are handed to
 journalctl as `-g` and `-p`, so they search the **whole journal**, not just the

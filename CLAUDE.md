@@ -134,6 +134,13 @@ These are decisions, not accidents. Change them deliberately, not incidentally.
 - **A filter says what it does, in words.** Its pane's title carries `name or
   description contains "x"` or `matching "x", error and above` — not the flag
   that implements it. A filtered pane that stays silent reads as a quiet one.
+- **Nothing from the far end reaches the terminal unsanitised.** Journal
+  messages, systemd property values, ssh and systemctl stderr all pass through
+  `sanitizeText`/`sanitizeMessage` at the point they enter the model — see
+  `sanitize.go`. A service can write escape sequences into its own log, and a
+  unit whose output goes to a serial console leaves carriage returns in it;
+  raw, they move the cursor, repaint the screen and make every width
+  calculation wrong. When adding a field, sanitise it at ingest, not at render.
 - **An overlay covers its own width, not the rest of the line.** `overlayMenu`
   rebuilds each covered row as prefix + box + `sliceANSI(rest)`. Dropping the
   tail blanks out half the screen.

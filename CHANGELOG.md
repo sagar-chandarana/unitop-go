@@ -46,6 +46,19 @@ to change.
 
 ### Fixed
 
+- **A log line can no longer escape its pane.** Journal messages are arbitrary
+  bytes: a unit whose output goes to a serial console leaves carriage returns
+  in them, a boot log arrives with embedded newlines, and any service at all
+  can write escape sequences into its own journal. Rendered raw, those moved
+  the cursor, repainted the screen, left a background colour set for
+  everything drawn afterwards, and made every width calculation wrong — a
+  Proxmox console log tore the pane's box apart. Everything from the far end —
+  journal fields, systemd property values, ssh and systemctl stderr — is now
+  sanitised where it enters: escape sequences dropped whole, other control
+  bytes shown as their Unicode pictures (`␇`, `␡`), tabs expanded, carriage
+  returns treated as the line breaks they meant, invalid UTF-8 replaced.
+- A multi-line journal entry — a stack trace, a boot log — is rendered as the
+  several lines it is, rather than one line with newlines in the middle of it.
 - The action popup stays inside the pane it belongs to instead of overrunning
   the bottom of the list onto the footer.
 - Rows in the table no longer turn bold at random. An error-priority line in

@@ -390,6 +390,10 @@ func parseShow(out string) []Unit {
 			if !ok {
 				continue
 			}
+			// A description, a status line or an ExecStart is free text the
+			// unit's author chose. See sanitize.go. The numeric properties are
+			// unaffected by this.
+			v = sanitizeText(v)
 			switch k {
 			case "Id":
 				u.Name = v

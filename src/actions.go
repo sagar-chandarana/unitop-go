@@ -64,7 +64,10 @@ func (m *model) runAction(unit string, a action) tea.Cmd {
 			name, args = "sudo", append([]string{"-n", "systemctl"}, args...)
 		}
 		out, err := r.command(ctx, name, args...).CombinedOutput()
-		return actionResult{unit: unit, label: a.label, err: err, out: strings.TrimSpace(string(out))}
+		// systemctl's output ends up in the toast; it is the far end's, so it
+		// goes through sanitize like everything else from there.
+		return actionResult{unit: unit, label: a.label, err: err,
+			out: sanitizeText(strings.TrimSpace(string(out)))}
 	}
 }
 
@@ -73,7 +76,7 @@ func (m *model) applyActionResult(res actionResult) tea.Cmd {
 	if res.err != nil {
 		msg := res.out
 		if msg == "" {
-			msg = res.err.Error()
+			msg = sanitizeText(res.err.Error())
 		}
 		if i := strings.IndexByte(msg, '\n'); i > 0 {
 			msg = msg[:i]

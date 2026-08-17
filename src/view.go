@@ -669,6 +669,8 @@ func sliceLabel(name string) string {
 }
 
 // unescapeUnit decodes the \xNN escapes systemd puts in unit and slice names.
+// Decoding is exactly how a control byte could get back into a name that
+// parseShow already cleaned, so the result goes through sanitize again.
 func unescapeUnit(s string) string {
 	if !strings.Contains(s, `\x`) {
 		return s
@@ -685,7 +687,7 @@ func unescapeUnit(s string) string {
 		b.WriteByte(s[i])
 		i++
 	}
-	return b.String()
+	return sanitizeText(b.String())
 }
 
 func cellFor(r row, c colDef, idx int) (string, lipgloss.Style) {
@@ -1061,14 +1063,18 @@ func (m model) formatLog(l logLine, width int) []string {
 		}
 		body = tag + ": " + l.msg
 	}
-	body = strings.ReplaceAll(body, "\t", "    ")
-
+	// A journal entry can be several lines — a stack trace, a boot log read off
+	// a serial console. sanitizeMessage keeps those breaks; honour them here
+	// rather than emitting a newline into the middle of a rendered row, which
+	// puts the rest of the pane wherever the terminal's cursor lands.
 	avail := max(4, width-len(prefix))
 	var segs []string
-	if m.logWrap {
-		segs = wrapWords(body, avail)
-	} else {
-		segs = []string{truncRunes(body, avail)}
+	for _, para := range strings.Split(body, "\n") {
+		if m.logWrap {
+			segs = append(segs, wrapWords(para, avail)...)
+		} else {
+			segs = append(segs, truncRunes(para, avail))
+		}
 	}
 
 	style := lipgloss.NewStyle().Foreground(prioColor(l.prio))

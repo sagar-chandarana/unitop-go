@@ -235,7 +235,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.polling = false
 		m.lastPoll = time.Now()
 		if msg.err != nil {
-			m.err = msg.err.Error()
+			// Most of this is the far end's stderr, which is no more trusted
+			// than the journal is. See sanitize.go.
+			m.err = sanitizeText(msg.err.Error())
 			m.attempts++
 			var unsupported *UnsupportedError
 			m.fatal = errors.As(msg.err, &unsupported)
