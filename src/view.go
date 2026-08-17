@@ -1219,7 +1219,7 @@ func (m model) confirmBox() []string {
 // keys that belong to the other pane are inert (see keyApplies), so offering
 // them would be a lie about what the next keystroke does.
 func (m model) footerKeys() [][2]string {
-	keys := [][2]string{{"↑↓", "move"}}
+	keys := [][2]string{{"↑↓", "move"}, {"F/end", "top/bottom"}}
 	if m.fullView {
 		keys = append(keys, [2]string{"enter/esc", "back"})
 	} else {

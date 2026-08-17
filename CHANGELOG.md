@@ -59,6 +59,11 @@ to change.
   returns treated as the line breaks they meant, invalid UTF-8 replaced.
 - A multi-line journal entry — a stack trace, a boot log — is rendered as the
   several lines it is, rather than one line with newlines in the middle of it.
+- Switching units opens the new log at the live end. The previous unit's
+  scroll position carried over, so the pane came up empty — and because follow
+  was still off, every batch that arrived pushed the view further up instead
+  of filling it in. The view can no longer float above the buffer at all.
+- `F`/`end` are named in the footer; they were bound but never advertised.
 - The action popup stays inside the pane it belongs to instead of overrunning
   the bottom of the list onto the footer.
 - Rows in the table no longer turn bold at random. An error-priority line in

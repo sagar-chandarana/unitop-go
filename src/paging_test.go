@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -201,6 +202,67 @@ func TestBufferIsBounded(t *testing.T) {
 	}
 	if !fetched {
 		t.Error("a buffer under the cap should still page")
+	}
+}
+
+// Switching units opens the new log where a log opens: at the live end. The
+// old unit's scroll position carried over, so the view sat above an empty
+// buffer — and because follow was still off, every batch that arrived pushed it
+// further up instead of filling it in.
+func TestSwitchingUnitsReturnsToTheLiveEnd(t *testing.T) {
+	m := pagingModel(200)
+	m.focus = focusLogs
+	for i := 0; i < 500 && !m.atTopOfLog(); i++ {
+		m.logKey("pgup")
+	}
+	if m.logFollow || m.logScroll == 0 {
+		t.Fatalf("expected to be scrolled back and not following: %d", m.logScroll)
+	}
+
+	// Move to a different unit, which restarts the stream.
+	m.cursor = 0
+	for m.cursor < len(m.rows)-1 {
+		if r := m.rows[m.cursor]; r.kind == rowUnit && r.unit.Name != m.journal.unit {
+			break
+		}
+		m.cursor++
+	}
+	m.afterCursorMove()
+
+	if m.logScroll != 0 || !m.logFollow {
+		t.Errorf("the new unit's log did not open at the live end: scroll=%d follow=%v",
+			m.logScroll, m.logFollow)
+	}
+
+	// And batches arriving on the fresh stream fill the pane rather than
+	// scrolling away from it.
+	lines := make([]logLine, 0, 30)
+	for i := 0; i < 30; i++ {
+		lines = append(lines, logLine{ts: time.Now(), prio: 6,
+			msg: "line " + strconv.Itoa(i) + " of the new unit"})
+	}
+	m.Update(journalBatch{gen: m.logGen, lines: lines})
+	if m.logScroll != 0 {
+		t.Errorf("an arriving batch moved the view: scroll=%d", m.logScroll)
+	}
+	win := strings.Join(m.renderLogWindow(m.logInnerWidth(), m.logHeight()), "\n")
+	if !strings.Contains(win, "line 29 of the new unit") {
+		t.Errorf("the new unit's newest line is not on screen:\n%s", win)
+	}
+}
+
+// Even with follow deliberately off, the view never floats above the buffer.
+func TestScrollPositionStaysInsideTheBuffer(t *testing.T) {
+	m := pagingModel(3)
+	m.focus = focusLogs
+	m.logFollow, m.logScroll = false, 0
+	for i := 0; i < 5; i++ {
+		m.Update(journalBatch{gen: m.logGen, lines: []logLine{
+			{ts: time.Now(), prio: 6, msg: "line"},
+		}})
+	}
+	if maxScroll := max(0, m.logDisplayTotal()-m.logHeight()); m.logScroll > maxScroll {
+		t.Errorf("logScroll = %d, past the end of a %d-line buffer", m.logScroll, maxScroll)
 	}
 }
 

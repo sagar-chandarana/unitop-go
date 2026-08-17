@@ -272,8 +272,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.logFollow {
 				m.logScroll = 0
 			} else {
-				// Keep the reader anchored where they scrolled to.
+				// Keep the reader anchored where they scrolled to, but never
+				// above the buffer: a position with nothing behind it renders
+				// as an empty pane.
 				m.logScroll += m.countDisplayLines(msg.lines)
+				m.clampLogScroll()
 			}
 		}
 		if msg.done {
@@ -895,8 +898,11 @@ func (m *model) syncJournal() tea.Cmd {
 	m.journal.stop()
 	m.journal = nil
 	m.logs = nil
-	m.logScroll = 0
 	m.logEpoch++
+	// A new unit's log opens where a log opens: at the live end. Carrying the
+	// old one's position over left the view above an empty buffer, and every
+	// batch that arrived pushed it further up rather than filling it in.
+	m.logScroll, m.logFollow = 0, true
 	m.loadingOlder, m.logAtStart, m.logLoadErr = false, false, ""
 	m.logGen++
 	if want == "" {
