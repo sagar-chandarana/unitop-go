@@ -313,6 +313,15 @@ earlier, does not render ANSI backgrounds at all; `termshot` does.)
 - These are verified against a real journal, not asserted: `journal_backlog_test.go`
   builds one with `systemd-journal-remote` and runs the actual argument lists
   through `journalctl -D`. It skips where those are unavailable.
+- **`-H` can be tested without a second machine.** Run an sshd of your own and
+  point unitop at it — `docs/local-sshd.sh` sets one up on 127.0.0.1:2222 with
+  its own host key and a wrapper on `PATH` that injects the connection details,
+  so unitop's real argument list is what gets exercised. That is how the
+  post-host `--` was settled: OpenSSH's getopt consumes the separator and the
+  remote command runs intact, which no amount of reading the synopsis will tell
+  you. Remember `SetEnv PATH=…` in the sshd config, or the remote session has
+  no `systemctl` and unitop correctly reports a host that is not running
+  systemd.
 - The NET columns are empty on most hosts because IP accounting is off by
   default. `DefaultIPAccounting=yes` (or per-unit `IPAccounting=yes`) enables
   them.
