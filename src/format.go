@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
+	"github.com/rivo/uniseg"
 )
 
 // unsetU64 is what systemd reports for a counter it is not tracking.
@@ -78,23 +81,14 @@ func humanDur(d time.Duration) string {
 	}
 }
 
-// pad right-pads s to w columns, truncating with an ellipsis when too long.
-// Operates on runes; the TUI never pads already-styled strings.
+// pad right-pads s to w terminal cells, truncating with an ellipsis when too
+// long. It operates on plain strings; the TUI never pads already-styled ones.
 func pad(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	r := []rune(s)
-	if len(r) == w {
-		return s
-	}
-	if len(r) > w {
-		if w == 1 {
-			return "…"
-		}
-		return string(r[:w-1]) + "…"
-	}
-	return s + strings.Repeat(" ", w-len(r))
+	s = truncRunes(s, w)
+	return s + strings.Repeat(" ", w-ansi.StringWidth(s))
 }
 
 // padLeft is pad's right-aligned twin, used for every numeric column.
@@ -102,89 +96,96 @@ func padLeft(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	r := []rune(s)
-	if len(r) == w {
-		return s
-	}
-	if len(r) > w {
-		if w == 1 {
-			return "…"
-		}
-		return string(r[:w-1]) + "…"
-	}
-	return strings.Repeat(" ", w-len(r)) + s
+	s = truncRunes(s, w)
+	return strings.Repeat(" ", w-ansi.StringWidth(s)) + s
 }
 
 func truncRunes(s string, w int) string {
-	r := []rune(s)
-	if len(r) <= w {
+	if w <= 0 {
+		return ""
+	}
+	if ansi.StringWidth(s) <= w {
 		return s
 	}
-	if w <= 1 {
+	if w == 1 {
 		return "…"
 	}
-	return string(r[:w-1]) + "…"
+	return ansi.Truncate(s, w, "…")
 }
 
 // wrapWords wraps on spaces where it can and falls back to a hard break for
 // tokens that are longer than the pane (paths, hashes, base64 blobs).
 func wrapWords(s string, w int) []string {
-	if w <= 0 || len([]rune(s)) <= w {
+	if w <= 0 || ansi.StringWidth(s) <= w {
 		return []string{s}
 	}
 	var out []string
-	var line []rune
+	var line string
+	lineWidth := 0
 	flush := func() {
-		out = append(out, string(line))
-		line = line[:0]
+		out = append(out, line)
+		line = ""
+		lineWidth = 0
 	}
 	for _, word := range strings.Split(s, " ") {
-		wr := []rune(word)
-		if len(wr) > w {
-			if len(line) > 0 {
+		wordWidth := ansi.StringWidth(word)
+		if wordWidth > w {
+			if lineWidth > 0 {
 				flush()
 			}
-			for len(wr) > w {
-				out = append(out, string(wr[:w]))
-				wr = wr[w:]
+			parts := wrapRunes(word, w)
+			for len(parts) > 1 {
+				out = append(out, parts[0])
+				parts = parts[1:]
 			}
-			line = append(line, wr...)
+			line = parts[0]
+			lineWidth = ansi.StringWidth(line)
 			continue
 		}
-		need := len(wr)
-		if len(line) > 0 {
+		need := wordWidth
+		if lineWidth > 0 {
 			need++ // the joining space
 		}
-		if len(line)+need > w {
+		if lineWidth+need > w {
 			flush()
 		}
-		if len(line) > 0 {
-			line = append(line, ' ')
+		if lineWidth > 0 {
+			line += " "
+			lineWidth++
 		}
-		line = append(line, wr...)
+		line += word
+		lineWidth += wordWidth
 	}
-	if len(line) > 0 || len(out) == 0 {
-		out = append(out, string(line))
+	if lineWidth > 0 || len(out) == 0 {
+		out = append(out, line)
 	}
 	return out
 }
 
-// wrapRunes hard-wraps a line to width w, returning at least one segment.
+// wrapRunes hard-wraps a line to width w terminal cells, returning at least one
+// segment without splitting a grapheme cluster.
 func wrapRunes(s string, w int) []string {
 	if w <= 0 {
 		return []string{s}
 	}
-	r := []rune(s)
-	if len(r) <= w {
+	if ansi.StringWidth(s) <= w {
 		return []string{s}
 	}
 	var out []string
-	for len(r) > w {
-		out = append(out, string(r[:w]))
-		r = r[w:]
+	var b strings.Builder
+	width := 0
+	for g := uniseg.NewGraphemes(s); g.Next(); {
+		cluster, cw := g.Str(), g.Width()
+		if width > 0 && width+cw > w {
+			out = append(out, b.String())
+			b.Reset()
+			width = 0
+		}
+		b.WriteString(cluster)
+		width += cw
 	}
-	if len(r) > 0 {
-		out = append(out, string(r))
+	if b.Len() > 0 {
+		out = append(out, b.String())
 	}
 	return out
 }

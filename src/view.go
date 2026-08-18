@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // paneGap is what sits between the two panes contents: each pane's own border
@@ -1493,24 +1494,5 @@ func truncANSI(s string, w int) string {
 	if lipgloss.Width(s) <= w {
 		return s
 	}
-	var b strings.Builder
-	visible, inEsc := 0, false
-	for _, r := range s {
-		if r == '\x1b' {
-			inEsc = true
-		}
-		if inEsc {
-			b.WriteRune(r)
-			if r == 'm' {
-				inEsc = false
-			}
-			continue
-		}
-		if visible >= w {
-			break
-		}
-		b.WriteRune(r)
-		visible++
-	}
-	return b.String() + "\x1b[0m"
+	return ansi.Truncate(s, w, "") + "\x1b[0m"
 }

@@ -291,6 +291,24 @@ func TestWrapWords(t *testing.T) {
 	}
 }
 
+func TestTextHelpersUseTerminalCellWidth(t *testing.T) {
+	if got := pad("界界", 3); got != "界…" {
+		t.Errorf("wide pad = %q, want %q", got, "界…")
+	}
+	if got := padLeft("界", 3); got != " 界" {
+		t.Errorf("wide left pad = %q, want %q", got, " 界")
+	}
+	for _, line := range wrapWords("界界界", 4) {
+		if got := lipglossWidth(line); got > 4 {
+			t.Errorf("wrapped line %q is %d cells wide, want at most 4", line, got)
+		}
+	}
+	styled := truncANSI(stBad.Render("界界界"), 4)
+	if got := lipglossWidth(styled); got > 4 {
+		t.Errorf("styled truncation is %d cells wide, want at most 4: %q", got, styled)
+	}
+}
+
 func TestTruncANSIKeepsEscapes(t *testing.T) {
 	out := truncANSI(stBad.Render("abcdefghij"), 4)
 	if strings.Count(out, "abcd") != 1 {

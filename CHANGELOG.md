@@ -46,6 +46,9 @@ to change.
 
 ### Fixed
 
+- Journal messages and service text containing wide Unicode characters, such
+  as CJK text or emoji, now respect terminal-cell widths instead of overflowing
+  their panes.
 - The initial poll is now marked in flight before its asynchronous command
   starts. On a slow connection the first refresh tick could otherwise launch a
   second poll over the same collector, racing its previous samples and
