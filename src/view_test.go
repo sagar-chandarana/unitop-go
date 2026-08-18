@@ -467,7 +467,7 @@ func TestEnterOnSliceDoesNotOpenFullView(t *testing.T) {
 
 var allFooterHints = []string{
 	"↑↓ move", "F/f top/bottom", "enter full view", "enter/esc back", "x actions", "tab focus",
-	"s sort", "i invert", "t tree", "/ filter units", "/ search log", "a all",
+	"s sort", "r rev", "t tree", "/ filter units", "/ search log", "a all",
 	"f follow", "f follow off",
 	"e level", "w wrap", "l log", "? help", "q quit",
 }
@@ -583,7 +583,7 @@ func TestFullViewIgnoresTableKeys(t *testing.T) {
 
 	// "/" is deliberately absent: in the full view it filters the log, which is
 	// checked separately below.
-	for _, k := range []string{"s", "S", "i", "t", "a", "tab"} {
+	for _, k := range []string{"s", "S", "r", "t", "a", "tab"} {
 		m.handleKey(keyOf(k))
 		if m.sortBy != before.sortBy || m.reverse != before.reverse || m.tree != before.tree ||
 			m.showAll != before.showAll || m.filterInput != before.input || m.focus != before.focus {
@@ -595,7 +595,7 @@ func TestFullViewIgnoresTableKeys(t *testing.T) {
 	}
 
 	foot := stripANSI(m.viewFooter())
-	for _, gone := range []string{"s sort", "i invert", "t tree", "/ filter", "a all", "tab focus", "l log"} {
+	for _, gone := range []string{"s sort", "r rev", "t tree", "/ filter", "a all", "tab focus", "l log"} {
 		if strings.Contains(foot, gone) {
 			t.Errorf("footer still offers %q in the full view: %s", gone, foot)
 		}

@@ -16,7 +16,7 @@ func main() {
 		host     = flag.String("H", "", "monitor a remote host over ssh (e.g. root@server1)")
 		interval = flag.Duration("i", time.Second, "refresh interval")
 		sortFlag = flag.String("s", "cpu", "initial sort column: name|state|cpu|mem|net|io|restarts|tasks|uptime")
-		reverse  = flag.Bool("r", false, "invert the initial sort order (-i is the interval)")
+		reverse  = flag.Bool("r", false, "reverse the initial sort")
 		showAll  = flag.Bool("a", false, "include inactive/dead units")
 		tree     = flag.Bool("t", false, "start in tree view, grouped by slice")
 		filter   = flag.String("f", "", "initial unit filter")

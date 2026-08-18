@@ -130,7 +130,7 @@ func TestUnsupportedIsFatalAndStopsPolling(t *testing.T) {
 	}
 
 	// An explicit R clears the verdict — systemd may have just been upgraded.
-	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("R")})
 	if m.fatal {
 		t.Error("R should clear the fatal verdict and retry")
 	}

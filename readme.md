@@ -115,7 +115,7 @@ unitop [flags]
   -H user@host   watch a remote host over ssh (key auth only)
   -i 2s          refresh interval (default 1s, clamped to 250ms-30s)
   -s cpu         initial sort column
-  -r             invert the initial sort order (-i is the interval)
+  -r             reverse the initial sort
   -t             start in tree view, grouped by slice
   -a             include inactive/dead units
   -f nginx       initial filter
@@ -165,7 +165,7 @@ see gets cleared.
 | --- | --- |
 | `/` | show only units whose name or description contains the text |
 | `s` / `S` | sort by the next / previous **visible** column |
-| `i` | invert the sort order |
+| `r` | reverse the sort |
 | `t` | tree view, grouped by slice |
 | `a` | include inactive/dead units |
 | `←` `→` | collapse / expand a slice in tree view |
@@ -190,7 +190,7 @@ just `home` and `end`.
 | --- | --- |
 | `l` | show or hide the log pane |
 | `p` | pause polling |
-| `r` | refresh now |
+| `R` | refresh now |
 | `+` / `-` | faster / slower refresh |
 | `?` | help |
 | `q` | quit |
