@@ -232,7 +232,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinnerTickMsg:
 		// Animate while something is pending: the first connection, or a page
 		// of earlier log entries. Otherwise stop re-arming.
-		if m.connected && !m.loadingOlder {
+		if m.connected && !m.loadingOlder && !m.logStarting() {
 			return m, nil
 		}
 		m.spinner++
@@ -992,7 +992,9 @@ func (m *model) syncJournal() tea.Cmd {
 		return nil
 	}
 	m.journal = startJournal(context.Background(), m.r, want, m.logFilt, journalBacklog, m.logGen)
-	return waitJournal(m.journal)
+	// Restart the spinner: it stops re-arming once connected, and the empty
+	// pane needs it while the first entries are on their way.
+	return tea.Batch(waitJournal(m.journal), spinnerTickCmd())
 }
 
 func (m model) selectedRow() (row, bool) {

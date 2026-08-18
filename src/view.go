@@ -1007,10 +1007,7 @@ func (m model) renderLogWindow(width, height int) []string {
 		acc = append(m.formatLog(m.logs[i], width), acc...)
 	}
 	if len(acc) == 0 {
-		if m.journal == nil {
-			return []string{stSubtle.Render("no journal for this row")}
-		}
-		return []string{stSubtle.Render("waiting for journal…")}
+		return m.emptyLogNotice()
 	}
 	end := min(len(acc), len(acc)-m.logScroll)
 	if end < 0 {
@@ -1033,6 +1030,42 @@ func (m model) renderLogWindow(width, height int) []string {
 		win[0] = truncANSI(m.logTopMarker(width), width)
 	}
 	return win
+}
+
+// emptyLogNotice explains an empty pane. "waiting for journal…" was the only
+// answer, and it was usually a lie: journalctl -f produces nothing at all when
+// the filter matches nothing, so the pane sat there apparently stuck when in
+// fact the search had already finished and come up empty.
+func (m model) emptyLogNotice() []string {
+	switch {
+	case m.journal == nil:
+		return []string{stSubtle.Render("no journal for this row")}
+
+	case m.logStarting():
+		// Only for the moment before the first entries land, so a slow remote
+		// does not flash "nothing matches" and then fill in.
+		frame := string(spinnerFrames[m.spinner%len(spinnerFrames)])
+		return []string{lipgloss.NewStyle().Foreground(colMagenta).Render(frame) +
+			stSubtle.Render(" reading the journal…")}
+
+	case !m.logFilt.empty():
+		return []string{
+			stWarn.Render("no entries " + m.logFilt.label()),
+			"",
+			stFaint.Render("esc clears it · e changes the level · / searches for something else"),
+		}
+	}
+	return []string{stSubtle.Render("this unit has written nothing to the journal")}
+}
+
+// journalGrace is how long an empty pane stays "reading" before it says the
+// journal has nothing. journalctl gives no end-of-backlog signal, so this is a
+// judgement about how long a first batch may take over ssh, not a fact.
+const journalGrace = 1500 * time.Millisecond
+
+// logStarting is true while a fresh stream has yet to produce anything.
+func (m model) logStarting() bool {
+	return m.journal != nil && len(m.logs) == 0 && time.Since(m.journal.started) < journalGrace
 }
 
 // logTopMarker reports the state of the backwards paging at the top of the

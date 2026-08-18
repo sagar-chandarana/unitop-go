@@ -153,3 +153,51 @@ func TestActiveUnitFilterIsShown(t *testing.T) {
 		t.Errorf("the title should say how many units were filtered out: %q", title)
 	}
 }
+
+// journalctl -f prints nothing at all when the filter matches nothing, so an
+// empty pane used to sit on "waiting for journal…" as though it were stuck. It
+// has to say which of the three it is.
+func TestEmptyLogSaysWhy(t *testing.T) {
+	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
+	m.width, m.height, m.ready = 140, 30, true
+	m.connected = true
+	m.units = testUnits()
+	m.rebuild()
+
+	// No stream at all — a slice row, say.
+	if got := stripANSI(strings.Join(m.emptyLogNotice(), " ")); !strings.Contains(got, "no journal") {
+		t.Errorf("with no stream: %q", got)
+	}
+
+	// A stream that has just started is still reading.
+	m.journal = &journalStream{unit: "nginx.service", gen: m.logGen, started: time.Now()}
+	if got := stripANSI(strings.Join(m.emptyLogNotice(), " ")); !strings.Contains(got, "reading the journal") {
+		t.Errorf("just started: %q", got)
+	}
+	if !m.logStarting() {
+		t.Error("a fresh empty stream should count as starting")
+	}
+
+	// Once it has had time and produced nothing, say so — and say what is
+	// filtering, since that is the likely reason.
+	m.journal.started = time.Now().Add(-2 * journalGrace)
+	if got := stripANSI(strings.Join(m.emptyLogNotice(), " ")); !strings.Contains(got, "nothing to the journal") {
+		t.Errorf("empty and settled: %q", got)
+	}
+	m.logFilt = logFilter{grep: "boom", prio: 3}
+	got := stripANSI(strings.Join(m.emptyLogNotice(), " "))
+	for _, want := range []string{"no entries", `matching "boom"`, "error and above", "esc clears it"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("filtered and empty: missing %q in %q", want, got)
+		}
+	}
+	if strings.Contains(got, "waiting") {
+		t.Errorf("still claiming to be waiting: %q", got)
+	}
+
+	// And that is what the pane actually renders, not just what the helper says.
+	win := stripANSI(strings.Join(m.renderLogWindow(m.logInnerWidth(), m.logHeight()), " "))
+	if !strings.Contains(win, "no entries") || !strings.Contains(win, `matching "boom"`) {
+		t.Errorf("the pane does not show it: %q", win)
+	}
+}

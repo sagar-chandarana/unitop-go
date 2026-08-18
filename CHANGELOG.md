@@ -63,6 +63,12 @@ to change.
   scroll position carried over, so the pane came up empty — and because follow
   was still off, every batch that arrived pushed the view further up instead
   of filling it in. The view can no longer float above the buffer at all.
+- An empty log pane says why. `journalctl -f` prints nothing at all when the
+  filter matches nothing, so the pane sat on `waiting for journal…` as though
+  it were stuck when in fact the search had finished and come up empty. It now
+  distinguishes three cases: still reading (with a spinner, for the moment
+  before the first entries land), nothing matches the filter — naming the
+  filter and how to clear it — and a unit that has genuinely written nothing.
 - A fatal verdict no longer latches. If an unsupported-systemd error arrives
   after unitop has already connected — a downgrade, or a poll that returns a
   garbled version — the tick suppressed itself and nothing ever cleared the

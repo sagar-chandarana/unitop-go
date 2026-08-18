@@ -136,11 +136,12 @@ type journalBatch struct {
 }
 
 type journalStream struct {
-	gen    int
-	unit   string
-	filter logFilter // what this stream was started with
-	ch     chan journalBatch
-	cancel context.CancelFunc
+	gen     int
+	unit    string
+	filter  logFilter // what this stream was started with
+	started time.Time // to tell "still reading" from "nothing matches"
+	ch      chan journalBatch
+	cancel  context.CancelFunc
 }
 
 func (j *journalStream) stop() {
@@ -156,7 +157,7 @@ func (j *journalStream) stop() {
 func startJournal(parent context.Context, r runner, unit string, f logFilter, backlog, gen int) *journalStream {
 	ctx, cancel := context.WithCancel(parent)
 	ch := make(chan journalBatch, 64)
-	js := &journalStream{gen: gen, unit: unit, filter: f, ch: ch, cancel: cancel}
+	js := &journalStream{gen: gen, unit: unit, filter: f, started: time.Now(), ch: ch, cancel: cancel}
 
 	args := append([]string{
 		"-u", unit,
