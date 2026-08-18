@@ -8,12 +8,16 @@
 ## systemd semantics
 
 - [inactive/dead means four different things](project_systemd_state_semantics.md) — `ExecMainCode` + `ConditionResult` tell them apart; includes real sampled tuples and the "code=0 while running" trap
+- [Four journalctl behaviours no man page states](project_journalctl_traps.md) — `-g` is not a seek (which is why the log pane is two commands), `-n 0` defeats `--after-cursor`, `-n N` order depends on the filter, `-g` exits 1 on no match
+- [/proc/stat counts guest time twice on purpose](project_proc_stat_guest.md) — the man page is silent, the kernel source is the authority, and only hypervisors show the bug
 - `systemctl show '*.service'` matches only ~60% of loaded units — the unit list must come from `list-units` first
 - Unit/slice names carry `\xNN` escapes (`my\x2dapp.slice`); parent derivation splits on literal `-`, so escaped names nest correctly by luck as well as by design
 
 ## Working on this repo
 
 - [Verifying the TUI needs a pty, and frames arrive as diffs](feedback_verify_tui_with_pty.md) — the `script` recipe plus why captured output looks like overlapping half-screens
+- [Rendering bugs hide in sizes nobody tests](feedback_layout_invariant.md) — one over-wide line spoils the whole screen; the matrix that found six, and why to re-run it with the backstop off
+- [`-H` needs no second machine](feedback_verify_remote_with_local_sshd.md) — `docs/local-sshd.sh`; it settled a wrong report about ssh's `--` that reading could not
 - [Go + nix loop: vendor, git add, then build](feedback_go_nix_workflow.md) — `nix build` also runs the tests, in a sandbox with no systemd/network
 - [Remote poll is one shell line and two ssh round trips](project_remote_poll.md) — a `#` in the marker once silently emptied the unit list
 - [Why exec and not D-Bus, with the measurements](project_dbus_vs_exec.md) — 1.7× at best, the journal and `-H` both still need exec; a poll costs ~265ms so `-i 250ms` is already saturated
