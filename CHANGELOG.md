@@ -78,6 +78,11 @@ to change.
   "start with nothing" but journalctl takes it as "replay nothing", which
   silently defeats `--after-cursor` and would drop whatever the unit wrote
   between the two commands.
+- The last line of a burst is no longer stranded. The journal reader only
+  handed lines to the UI when it saw the model had caught up, so a line that
+  arrived while it had not sat in the buffer until another line turned up —
+  on a quiet unit, for as long as it stayed quiet. It now coalesces on a clock
+  instead, so nothing waits more than 50ms whatever the reader is doing.
 - A log search that matches nothing no longer shows a red error. `journalctl
   -g` exits 1 when its pattern matches nothing and says nothing on stderr about
   it, so an empty result read as a failure to open the journal. A real failure

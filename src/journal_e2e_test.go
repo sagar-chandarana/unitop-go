@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -198,5 +200,129 @@ func TestNoMatchesIsNotAFailure(t *testing.T) {
 		t.Log("note: an empty journal directory is not an error here, only an empty result")
 	} else {
 		t.Logf("a real failure is still reported: %v", err)
+	}
+}
+
+// writeEntries adds a journal file to dir. journalctl -f watches the directory,
+// so this is how a unit "writes a log line" for the tests.
+func writeEntries(t *testing.T, dir, name string, first, n int, msg string) {
+	t.Helper()
+	const remote = "/run/current-system/sw/lib/systemd/systemd-journal-remote"
+	const boot = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d"
+	// Now, not the fixture epoch: an entry the tail is meant to pick up has to
+	// be newer than the moment the tail started, or --since excludes it and the
+	// test fails for a reason that has nothing to do with the code.
+	base := time.Now().UnixMicro()
+
+	var b strings.Builder
+	for i := first; i < first+n; i++ {
+		id, t64 := strconv.Itoa(i), base+int64(i)
+		b.WriteString("__CURSOR=s=abc;i=" + strconv.FormatInt(int64(i), 16) +
+			";b=" + boot + ";m=" + strconv.FormatInt(int64(i), 16) +
+			";t=" + strconv.FormatInt(t64, 16) + ";x=0\n")
+		b.WriteString("__REALTIME_TIMESTAMP=" + strconv.FormatInt(t64, 10) + "\n")
+		b.WriteString("__MONOTONIC_TIMESTAMP=" + id + "\n")
+		b.WriteString("_BOOT_ID=" + boot + "\n")
+		b.WriteString("_SYSTEMD_UNIT=demo.service\nPRIORITY=6\n")
+		b.WriteString("MESSAGE=" + msg + " " + id + "\n\n")
+	}
+	// Build it elsewhere and move it in. journald appends to a file it already
+	// holds open; this fixture creates one, and a following journalctl that
+	// opens it mid-write reads only the entries flushed so far and never goes
+	// back for the rest. The move makes it appear complete or not at all.
+	stage := filepath.Join(t.TempDir(), name)
+	cmd := exec.Command(remote, "--output="+stage, "-")
+	cmd.Stdin = strings.NewReader(b.String())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("writing %s: %v: %s", name, err, out)
+	}
+	if err := os.Rename(stage, filepath.Join(dir, name)); err != nil {
+		t.Fatalf("moving %s into place: %v", name, err)
+	}
+}
+
+// The tail is the whole point of the pane and the one part the static-journal
+// tests cannot reach: lines written after the backlog has been read must arrive
+// on their own, at the bottom, without disturbing the view.
+func TestTailDeliversLiveEntries(t *testing.T) {
+	dir := testJournal(t)
+	m := e2eModel(t, dir, logFilter{})
+	drain(t, m, 15*time.Second)
+
+	held := len(m.logs)
+	newest := m.logs[held-1].msg
+
+	// Let the tail get up and watching. It replays from the backlog cursor, but
+	// a journal file that appears while it is still scanning can be missed by
+	// the replay and only half-caught by inotify.
+	time.Sleep(750 * time.Millisecond)
+	writeEntries(t, dir, "live.journal", 9001, 3, "LIVE entry")
+
+	deadline := time.After(20 * time.Second)
+	for len(m.logs) < held+3 {
+		select {
+		case b, ok := <-m.journal.ch:
+			if !ok {
+				t.Fatalf("the stream ended with %d of 3 live entries delivered", len(m.logs)-held)
+			}
+			m.Update(b)
+		case <-deadline:
+			t.Fatalf("only %d of 3 live entries arrived", len(m.logs)-held)
+		}
+	}
+
+	if got := m.logs[len(m.logs)-1].msg; !strings.HasSuffix(got, "LIVE entry 9003") {
+		t.Errorf("newest line is %q, want the last live entry", got)
+	}
+	if m.logs[held-1].msg != newest {
+		t.Error("the backlog was disturbed by the tail")
+	}
+	if m.logScroll != 0 || !m.logFollow {
+		t.Errorf("following was lost: scroll=%d follow=%v", m.logScroll, m.logFollow)
+	}
+	win := stripANSI(strings.Join(m.renderLogWindow(m.logInnerWidth(), m.logHeight()), "\n"))
+	if !strings.Contains(win, "LIVE entry 9003") {
+		t.Errorf("the live entry is not on screen:\n%s", win)
+	}
+}
+
+// The same, with a search running: the tail must honour the filter, and a live
+// line that does not match must not appear.
+func TestTailHonoursTheFilter(t *testing.T) {
+	dir := testJournal(t)
+	m := e2eModel(t, dir, logFilter{grep: "LIVE"})
+	drain(t, m, 15*time.Second)
+	if len(m.logs) != 0 {
+		t.Fatalf("expected an empty start, got %d entries", len(m.logs))
+	}
+
+	time.Sleep(750 * time.Millisecond)
+	writeEntries(t, dir, "live.journal", 9001, 2, "LIVE entry")
+	writeEntries(t, dir, "noise.journal", 9101, 2, "unrelated noise")
+
+	deadline := time.After(20 * time.Second)
+	for len(m.logs) < 2 {
+		select {
+		case b, ok := <-m.journal.ch:
+			if !ok {
+				t.Fatalf("stream ended with %d entries", len(m.logs))
+			}
+			m.Update(b)
+		case <-deadline:
+			t.Fatalf("only %d of 2 matching entries arrived", len(m.logs))
+		}
+	}
+	// Give anything unwanted a chance to turn up.
+	time.Sleep(500 * time.Millisecond)
+	for len(m.journal.ch) > 0 {
+		m.Update(<-m.journal.ch)
+	}
+	for _, l := range m.logs {
+		if strings.Contains(l.msg, "unrelated noise") {
+			t.Errorf("the tail delivered a line the filter excludes: %q", l.msg)
+		}
+	}
+	if len(m.logs) != 2 {
+		t.Errorf("hold %d entries, want exactly the 2 matching ones", len(m.logs))
 	}
 }

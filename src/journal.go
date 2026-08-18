@@ -226,7 +226,7 @@ func startJournal(parent context.Context, r runner, unit string, f logFilter, ba
 		}
 
 		// Phase two.
-		followJournal(ctx, r, unit, f, last, since, gen, ch, send)
+		followJournal(ctx, r, unit, f, last, since, gen, send)
 	}()
 	return js
 }
@@ -300,7 +300,7 @@ func readBacklog(ctx context.Context, r runner, unit string, f logFilter, n int)
 
 // followJournal tails the unit, picking up where the backlog left off.
 func followJournal(ctx context.Context, r runner, unit string, f logFilter,
-	after string, since time.Time, gen int, ch chan journalBatch, send func(journalBatch) bool) {
+	after string, since time.Time, gen int, send func(journalBatch) bool) {
 
 	args := followArgs(unit, f, after, since)
 	fail := func(msg string) {
@@ -321,8 +321,29 @@ func followJournal(ctx context.Context, r runner, unit string, f logFilter,
 		return
 	}
 
-	sc := bufio.NewScanner(stdout)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	// Read on its own goroutine so the sender can be woken by a clock as well
+	// as by a line. Gating the flush on the consumer instead — "send when the
+	// model has caught up" — stranded the last line of any burst that arrived
+	// while it had not: it sat in pending until another line turned up, which
+	// on a quiet unit is however long the unit stays quiet.
+	lines := make(chan logLine, 512)
+	go func() {
+		defer close(lines)
+		sc := bufio.NewScanner(stdout)
+		sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+		for sc.Scan() {
+			l, ok := parseJournalJSON(sc.Bytes())
+			if !ok {
+				continue
+			}
+			select {
+			case lines <- l:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	pending := make([]logLine, 0, 64)
 	flush := func() bool {
 		if len(pending) == 0 {
@@ -335,19 +356,29 @@ func followJournal(ctx context.Context, r runner, unit string, f logFilter,
 		return true
 	}
 
-	for sc.Scan() {
-		line, ok := parseJournalJSON(sc.Bytes())
-		if !ok {
-			continue
-		}
-		pending = append(pending, line)
-		// Flush when the reader is caught up — which for a live tail is every
-		// line — or when the burst gets big enough that holding it back would
-		// look like a stall.
-		if len(pending) >= 200 || len(ch) == 0 {
+	// Coalesce bursts, but never hold a line longer than this: one message per
+	// line would be one re-render per line for a unit that logs in floods.
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+reading:
+	for {
+		select {
+		case l, ok := <-lines:
+			if !ok {
+				break reading
+			}
+			pending = append(pending, l)
+			if len(pending) >= 200 {
+				if !flush() {
+					return
+				}
+			}
+		case <-tick.C:
 			if !flush() {
 				return
 			}
+		case <-ctx.Done():
+			return
 		}
 	}
 	flush()
