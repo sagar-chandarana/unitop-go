@@ -8,114 +8,81 @@ to change.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-08-18
+
+The log pane was reading the journal wrongly, and a service could scribble on
+your terminal through it. Both are fixed. Alongside that, a pass over the keys
+and the layout: every key now belongs to a pane and says so, and no line can
+overrun the terminal.
+
 ### Added
 
-- Each pane is drawn in its own box, and the focused one's is heavy and
-  coloured. Focus used to be a single character on the divider between them,
-  which is not where you are looking. Both boxes are always there, so moving
-  focus does not shift the layout.
-- Each box's title says what its filter is doing, in words: `units 12 of 340 ·
-  name or description contains "nginx"`, `log nginx.service · matching
-  "denied", error and above`. A filtered pane that did not say so reads as a
+- **Each pane is drawn in its own box, and the focused one's is heavy and
+  coloured.** Focus used to be a single character on the divider between the
+  panes, which is not where you are looking. Both boxes are always present, so
+  moving focus does not shift the layout, and the difference reads without
+  colour as well as with it.
+- **Each box's title says what its filter is doing, in words** — `units 12 of
+  340 · name or description contains "nginx"`, or `log nginx.service · matching
+  "denied", error and above`. A filtered pane that does not say so reads as a
   quiet one.
+- A minimum terminal size, 40×10. Below it unitop says so — the size it has,
+  the size it needs, and how to quit — instead of drawing a layout that cannot
+  exist at that size.
 
 ### Changed
 
-- Keys belong to the pane they act on. With the log focused, `s` `S` `r` `t`
-  `a` do nothing; with the table focused, `f` `e` `w` do nothing. The footer
-  lists only the keys that apply where you are, so what is on screen is what
-  the next keystroke will do — `s` used to resort the table silently behind a
-  log you were reading.
+- **Keys belong to the pane they act on.** With the log focused, `s` `S` `r`
+  `t` `a` do nothing; with the table focused, `f` `F` `e` `w` do nothing. The
+  footer lists only the keys that apply where you are, so what is on screen is
+  what the next keystroke will do. `s` used to resort the table silently behind
+  a log you were reading.
+- **One key per motion.** Movement is the arrows, `pgup`/`pgdn` and
+  `home`/`end`, in the table, the log and the action menu alike. `F` and `f`
+  are the log's two ends — `f` resumes following, and the live end *is* the
+  bottom — and they are the only letters bound to motion anywhere. The vim
+  aliases (`j` `k` `h`, `g`, `G`) and the readline ones (`ctrl+b`, `ctrl+f`)
+  are gone, along with `=`/`_`, which duplicated `+`/`-`, and `r` as a third
+  way to retry a failed connection alongside `R` and `enter`. Every letter an
+  alias held is a letter unavailable for a command, and `ctrl+f` was fighting
+  the `f` that follows the log.
+- **`esc` steps back exactly one thing per press**, innermost first: cancel
+  what you are typing, close the menu or the help, clear the focused pane's
+  filter, leave the full view, return focus to the table. It never reaches past
+  the first that applies, so nothing you cannot see is cleared. Three faults
+  fall out of that. An applied log search could not be cleared at all — the old
+  cascade only ever looked at the unit filter, so `esc` in the log pane did
+  nothing. Pressing it in the full view cleared the *table's* filter, something
+  not on screen, and left you still in the full view. And `esc` while typing
+  threw the filter away rather than restoring what you were amending, so
+  thinking better of an edit cost you the filter. `esc` is now documented, too;
+  it did five things and had no line of its own anywhere.
 - The `/` prompt says what the text will do rather than which pane owns it:
   "show units whose name or description contains", or "show journal lines
-  matching".
-- The help screen is grouped by pane, and sets itself in two columns rather
-  than losing its last group off the bottom of a short terminal.
-
-- One motion, one key. Movement is the arrows, `pgup`/`pgdn`, `F` or `home`
-  for the top and `end` for the bottom — in the table, the log and the action
-  menu alike. The vim aliases (`j` `k` `h`, `g`, `G`) and the readline ones
-  (`ctrl+b`, `ctrl+f`) are gone; so are `=`/`_`, which duplicated `+`/`-`, and
-  `r` as a third way to retry a failed connection alongside `R` and `enter`.
-  `ctrl+f` in particular fought the `f` that follows the log, which is
-  unchanged.
+  matching". It gives ground as the terminal narrows — the explanation first,
+  then the hint — but never what you have typed.
+- The help is grouped by pane, sets itself in two columns on a wide screen, and
+  scrolls when the terminal is too small for it. At 80×24 it used to be cut off
+  at the bottom, taking its last group with it — and the last group is where
+  quit lives.
 - The heat ramp is back to five steps — grey, green, yellow, orange, red —
-  after the move to terminal colours had flattened it to four. Orange is
-  bright yellow, which every theme renders warmer than plain yellow, so the
-  gradient still comes entirely from the sixteen.
-
-### Added
-
-- A minimum terminal size, 40×10. Below it unitop says so — with the current
-  size, the size it needs, and how to quit — instead of drawing a layout that
-  cannot exist at that size.
+  after the move to terminal colours had flattened it to four. Orange is bright
+  yellow, which every theme renders warmer than plain yellow, so the gradient
+  still comes entirely from the sixteen.
 
 ### Fixed
 
-- **Host CPU% no longer double-counts guest time.** The kernel adds each unit
-  of guest cputime to `CPUTIME_USER` (or `CPUTIME_NICE`) *and* to
-  `CPUTIME_GUEST` (or `CPUTIME_GUEST_NICE`) — see `account_guest_time()` — so
-  summing all ten `/proc/stat` fields counted it twice. That inflated both the
-  busy time and the total, and since busy is the smaller of the two it pushed
-  the percentage up: a hypervisor spending half a second in a guest and half
-  idle reported 67%, not 50%. Only affects hosts running VMs; elsewhere the
-  fields are zero.
-- One oversized journal entry can no longer end the tail. `bufio.Scanner` stops
-  with `ErrTooLong` past its buffer and nothing checked `Err()`, so an entry
-  over 4 MiB would have ended the stream for good with "journal stream ended"
-  the only clue. Reading is now `bufio.Reader`-based: an entry past the cap is
-  dropped, with a note in its place, and the tail carries on. (A latent defect
-  rather than an observed one — journald bounds captured stdout, though a
-  native entry has no such bound and `-o json` escaping inflates it.)
-- Backwards page fetches are cancelled with the stream that asked for them.
-  They ran on `context.Background()`, so changing unit or filter left a
-  `journalctl` running — a remote one over ssh — for up to 30s, to produce an
-  answer that would be discarded on arrival.
-- `q` quits from the too-small notice even with the filter editor or the action
-  menu open underneath. The notice says q quits; with the editor up it was a
-  character to type, and with the menu up it closed a menu that is not on
-  screen.
-- The overlay tail is sliced by terminal cell rather than by rune, so a row
-  with a double-width name resumes at the column the popup actually covered.
-- **Nothing can overrun the terminal any more.** A line wider than the screen
-  wraps, and a wrapped line pushes every line below it down one, so a single
-  long string did not spoil itself — it spoiled the whole screen. Six places
-  did it: the filter prompt (at any width narrower than the prompt, so 75 or
-  60 columns, not just absurd ones), the help in one-column mode, its
-  "more below" marker, the action menu and its confirmation, and the startup
-  screen's error, suggestions and key hints. Each now gives ground in its own
-  way — the filter prompt drops its explanation and then its hint but never
-  what you typed; the popups cap to the screen; the startup screen wraps to it
-  — and View() truncates as a last resort so the invariant holds whatever a
-  future composer does.
-
-- Journal messages and service text containing wide Unicode characters, such
-  as CJK text or emoji, now respect terminal-cell widths instead of overflowing
-  their panes.
-- The initial poll is now marked in flight before its asynchronous command
-  starts. On a slow connection the first refresh tick could otherwise launch a
-  second poll over the same collector, racing its previous samples and
-  producing incorrect rates or a concurrent-map panic.
-- Changing units or journal filters no longer leaves cancelled `journalctl`
-  (or remote `ssh`) children unreaped. The stream now waits for every started
-  child as it shuts down.
 - **A log line can no longer escape its pane.** Journal messages are arbitrary
   bytes: a unit whose output goes to a serial console leaves carriage returns
   in them, a boot log arrives with embedded newlines, and any service at all
   can write escape sequences into its own journal. Rendered raw, those moved
-  the cursor, repainted the screen, left a background colour set for
-  everything drawn afterwards, and made every width calculation wrong — a
-  Proxmox console log tore the pane's box apart. Everything from the far end —
-  journal fields, systemd property values, ssh and systemctl stderr — is now
-  sanitised where it enters: escape sequences dropped whole, other control
-  bytes shown as their Unicode pictures (`␇`, `␡`), tabs expanded, carriage
-  returns treated as the line breaks they meant, invalid UTF-8 replaced.
-- A multi-line journal entry — a stack trace, a boot log — is rendered as the
-  several lines it is, rather than one line with newlines in the middle of it.
-- Switching units opens the new log at the live end. The previous unit's
-  scroll position carried over, so the pane came up empty — and because follow
-  was still off, every batch that arrived pushed the view further up instead
-  of filling it in. The view can no longer float above the buffer at all.
+  the cursor, repainted the screen, left a background colour set for everything
+  drawn afterwards, and made every width calculation wrong — a Proxmox console
+  log tore the pane's box apart. Everything from the far end — journal fields,
+  systemd property values, ssh and systemctl stderr — is now sanitised where it
+  enters: escape sequences dropped whole, other control bytes shown as their
+  Unicode pictures (`␇`, `␡`), tabs expanded, carriage returns treated as the
+  line breaks they meant, invalid UTF-8 replaced.
 - **The log search really does search the whole journal now.** `journalctl -n
   500 -f -g PATTERN` looks like it does, but with `-f` journalctl seeks back
   500 **raw** entries and only then applies the pattern — so a search found
@@ -126,64 +93,84 @@ to change.
   indexed and journalctl can seek by it.
 
   The stream is now two commands: a backlog that terminates — so it can search
-  properly, and so it has an end — and then a tail resuming from the last
-  entry's cursor. `-n 0` is deliberately absent from the tail: it reads as
-  "start with nothing" but journalctl takes it as "replay nothing", which
-  silently defeats `--after-cursor` and would drop whatever the unit wrote
-  between the two commands.
-- The last line of a burst is no longer stranded. The journal reader only
-  handed lines to the UI when it saw the model had caught up, so a line that
-  arrived while it had not sat in the buffer until another line turned up —
-  on a quiet unit, for as long as it stayed quiet. It now coalesces on a clock
-  instead, so nothing waits more than 50ms whatever the reader is doing.
+  properly, and so it has an end — then a tail resuming from the last entry's
+  cursor. `-n 0` is deliberately absent from that tail: it reads as "start with
+  nothing" but journalctl takes it as "replay nothing", which silently defeats
+  `--after-cursor` and would drop whatever the unit wrote between the two
+  commands.
+- **Host CPU% no longer double-counts guest time.** The kernel adds each unit
+  of guest cputime to `CPUTIME_USER` (or `CPUTIME_NICE`) *and* to
+  `CPUTIME_GUEST` (or `CPUTIME_GUEST_NICE`) — see `account_guest_time()` — so
+  summing all ten `/proc/stat` fields counted it twice. That inflated the busy
+  time and the total both, and since busy is the smaller of the two it pushed
+  the percentage up: a hypervisor spending half a second in a guest and half
+  idle reported 67%, not 50%. Only hosts running VMs are affected; elsewhere
+  the fields are zero.
+- **Nothing can overrun the terminal any more.** A line wider than the screen
+  wraps, and a wrapped line pushes every line below it down one — so a single
+  long string did not spoil itself, it spoiled the whole screen. Six places did
+  it: the filter prompt (at any width narrower than the prompt, so 60 or 75
+  columns, not just absurd ones), the help in one-column mode, its "more below"
+  marker, the action menu and its confirmation, and the startup screen's error,
+  suggestions and key hints. Each gives ground in its own way now, and `View()`
+  truncates as a last resort so the invariant holds whatever is added later.
+- Journal messages and service text containing wide Unicode — CJK, emoji —
+  respect terminal cell widths instead of overflowing their panes.
+- A multi-line journal entry, such as a stack trace or a boot log, is rendered
+  as the several lines it is rather than one line with newlines inside it.
+- Switching units opens the new log at the live end. The previous unit's scroll
+  position carried over, so the pane came up empty — and because follow was
+  still off, every batch that arrived pushed the view further up instead of
+  filling it in. The view can no longer float above the buffer at all.
+- The last line of a burst is no longer stranded. The reader handed lines to
+  the UI only when it could see the model had caught up, so a line arriving
+  while it had not sat in the buffer until another line turned up — on a quiet
+  unit, for as long as it stayed quiet. It coalesces on a clock now, so nothing
+  waits more than 50ms.
+- One oversized journal entry can no longer end the tail. `bufio.Scanner` stops
+  with `ErrTooLong` past its buffer and nothing checked `Err()`, so an entry
+  over 4 MiB would have ended the stream for good, with "journal stream ended"
+  the only clue. An entry past the cap is now dropped, with a note in its
+  place, and the tail carries on.
+- An empty log pane says why. `journalctl -f` prints nothing at all when the
+  filter matches nothing, so the pane sat on `waiting for journal…` as though
+  it were stuck when the search had in fact finished and come up empty. It now
+  distinguishes still reading, nothing matching the filter — naming the filter
+  and how to clear it — and a unit that has genuinely written nothing.
 - A log search that matches nothing no longer shows a red error. `journalctl
   -g` exits 1 when its pattern matches nothing and says nothing on stderr about
   it, so an empty result read as a failure to open the journal. A real failure
   — permissions, the usual one — exits with something to say, and still
-  reports. The same applied to paging backwards, where running out of older
-  matches claimed the page could not be loaded instead of saying it had reached
-  the beginning.
-- An empty log pane says why. `journalctl -f` prints nothing at all when the
-  filter matches nothing, so the pane sat on `waiting for journal…` as though
-  it were stuck when in fact the search had finished and come up empty. It now
-  distinguishes three cases: still reading, nothing matches the filter — naming
-  the filter and how to clear it — and a unit that has genuinely written
-  nothing. Which of the three it is comes from the stream, not from a timer:
-  the backlog is its own command, so it ends.
-- A fatal verdict no longer latches. If an unsupported-systemd error arrives
-  after unitop has already connected — a downgrade, or a poll that returns a
-  garbled version — the tick suppressed itself and nothing ever cleared the
-  flag, so the display froze permanently and only manual refreshes moved it. A
-  successful poll clears it, `R` clears it, and while it is set the host bar
-  says `NOT POLLING — R to retry` instead of the screen quietly going stale.
-- **`esc` pops exactly one thing per press**, innermost first: cancel what you
-  are typing, close the menu or the help, clear the focused pane's filter,
-  leave the full view, return focus to the table. Three things fall out of
-  that. An applied log search could not be cleared at all — the cascade only
-  ever looked at the unit filter, so `esc` in the log pane did nothing.
-  Pressing it in the full view cleared the *table's* filter, something not on
-  screen, and left you still in the full view. And `esc` while typing threw the
-  filter away rather than restoring what you were amending, so thinking better
-  of an edit cost you the filter.
-- `esc` is documented. It did five things and had no line of its own anywhere.
-- The help scrolls when the terminal is too small for it — at 80×24 it used to
-  be cut off at the bottom, which took the last group with it, and the last
-  group is where quit lives. It says which way there is more, its own keys are
-  what the footer offers while it is open, and its notes wrap instead of
-  running off a narrow screen.
-- `F` and `f` are the log's two ends and belong to no other pane. `F` used to
-  move the table cursor and the action menu as well, which made it the one
-  letter bound to motion outside the log — and left it with a counterpart in
-  the log (`f`) but none in the table. The table's ends are `home` and `end`,
-  as they always were. Both are named in the log's footer, which never
-  advertised them.
+  reports. Paging backwards had the same fault, and claimed a page could not be
+  loaded when it had simply reached the beginning.
+- Backwards page fetches are cancelled with the stream that asked for them.
+  They ran detached, so changing unit or filter left a `journalctl` running — a
+  remote one, over ssh — for up to 30s, to produce an answer that would be
+  discarded on arrival.
+- The initial poll is marked in flight before its command starts. On a slow
+  connection the first refresh tick could otherwise launch a second poll over
+  the same collector, racing its samples and producing wrong rates or a
+  concurrent-map panic.
+- Changing units or journal filters no longer leaves cancelled `journalctl` or
+  remote `ssh` children unreaped.
+- A fatal verdict no longer latches. If an unsupported-systemd error arrived
+  after unitop had already connected, the tick suppressed itself and nothing
+  ever cleared the flag, so the display froze permanently and only manual
+  refreshes moved it. A successful poll clears it, `R` clears it, and while it
+  is set the host bar says `NOT POLLING — R to retry` rather than the screen
+  quietly going stale.
 - The action popup stays inside the pane it belongs to instead of overrunning
-  the bottom of the list onto the footer.
+  the bottom of the list onto the footer, and the tail beneath it is sliced by
+  terminal cell rather than by rune, so a row with a double-width name resumes
+  at the column the popup actually covered.
+- `q` quits from the too-small notice even with the filter editor or the action
+  menu open underneath. The notice says `q` quits; with the editor up it was a
+  character to type, and with the menu up it closed a menu that is not on
+  screen.
 - Rows in the table no longer turn bold at random. An error-priority line in
-  the log pane is rendered bold, and the attribute was bleeding into the row
-  drawn beneath it — so which units looked bold depended on which unit was
-  selected and what its journal happened to contain. Every styled line now
-  starts with a reset, so a line depends on nothing but itself.
+  the log pane is rendered bold, and the attribute bled into the row drawn
+  beneath it — so which units looked bold depended on which unit was selected
+  and what its journal happened to contain.
 
 ## [0.2.0] — 2026-08-16
 
@@ -299,7 +286,8 @@ First release.
 - Static `linux/amd64` and `linux/arm64` binaries, a flake with an overlay, and
   nothing to configure.
 
-[Unreleased]: https://github.com/sagar-chandarana/unitop-go/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/sagar-chandarana/unitop-go/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/sagar-chandarana/unitop-go/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/sagar-chandarana/unitop-go/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/sagar-chandarana/unitop-go/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/sagar-chandarana/unitop-go/compare/v0.1.1...v0.1.2
