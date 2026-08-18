@@ -52,6 +52,21 @@ func TestStartupSpinnerAnimatesThenStops(t *testing.T) {
 	}
 }
 
+// Init starts a poll asynchronously. It must mark that request in flight
+// before the first refresh tick has a chance to launch another one.
+func TestInitMarksInitialPollInFlight(t *testing.T) {
+	m := startupModel()
+	if m.polling {
+		t.Fatal("test setup unexpectedly has a poll in flight")
+	}
+	if cmd := m.Init(); cmd == nil {
+		t.Fatal("Init did not schedule the first poll")
+	}
+	if !m.polling {
+		t.Fatal("Init did not mark the initial poll in flight")
+	}
+}
+
 func TestStartupFailureShowsReasonAndNextSteps(t *testing.T) {
 	m := startupModel()
 	m.Update(unitsMsg{err: errors.New("remote poll: exit status 255: Permission denied (publickey)")})

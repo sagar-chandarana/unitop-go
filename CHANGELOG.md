@@ -46,6 +46,13 @@ to change.
 
 ### Fixed
 
+- The initial poll is now marked in flight before its asynchronous command
+  starts. On a slow connection the first refresh tick could otherwise launch a
+  second poll over the same collector, racing its previous samples and
+  producing incorrect rates or a concurrent-map panic.
+- Changing units or journal filters no longer leaves cancelled `journalctl`
+  (or remote `ssh`) children unreaped. The stream now waits for every started
+  child as it shuts down.
 - **A log line can no longer escape its pane.** Journal messages are arbitrary
   bytes: a unit whose output goes to a serial console leaves carriage returns
   in them, a boot log arrives with embedded newlines, and any service at all

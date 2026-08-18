@@ -176,7 +176,12 @@ func newModel(r runner, hostLabel string, interval time.Duration, sortBy sortKey
 	}
 }
 
-func (m model) Init() tea.Cmd {
+func (m *model) Init() tea.Cmd {
+	// Mark the initial request in flight before returning its command. Commands
+	// run asynchronously, so leaving this false let the first timer tick start a
+	// second Poll while a slow initial (especially ssh) poll was still mutating
+	// the collector's previous-sample state.
+	m.polling = true
 	return tea.Batch(m.pollCmd(), tickCmd(m.interval), spinnerTickCmd())
 }
 

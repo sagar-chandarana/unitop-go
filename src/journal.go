@@ -320,6 +320,16 @@ func followJournal(ctx context.Context, r runner, unit string, f logFilter,
 		fail("cannot run journalctl: " + err.Error())
 		return
 	}
+	// CommandContext kills the child when ctx is cancelled, but it does not reap
+	// it; only Wait does. A selection or filter change cancels this stream, so
+	// always wait before returning instead of accumulating dead journalctl (or
+	// ssh) children while the user navigates between units.
+	waited := false
+	defer func() {
+		if !waited {
+			_ = cmd.Wait()
+		}
+	}()
 
 	// Read on its own goroutine so the sender can be woken by a clock as well
 	// as by a line. Gating the flush on the consumer instead — "send when the
@@ -383,6 +393,7 @@ reading:
 	}
 	flush()
 	_ = cmd.Wait()
+	waited = true
 	msg := sanitizeText(strings.TrimSpace(stderr.String()))
 	if msg == "" {
 		msg = "journal stream ended"
