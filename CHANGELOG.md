@@ -44,7 +44,25 @@ to change.
   bright yellow, which every theme renders warmer than plain yellow, so the
   gradient still comes entirely from the sixteen.
 
+### Added
+
+- A minimum terminal size, 40×10. Below it unitop says so — with the current
+  size, the size it needs, and how to quit — instead of drawing a layout that
+  cannot exist at that size.
+
 ### Fixed
+
+- **Nothing can overrun the terminal any more.** A line wider than the screen
+  wraps, and a wrapped line pushes every line below it down one, so a single
+  long string did not spoil itself — it spoiled the whole screen. Six places
+  did it: the filter prompt (at any width narrower than the prompt, so 75 or
+  60 columns, not just absurd ones), the help in one-column mode, its
+  "more below" marker, the action menu and its confirmation, and the startup
+  screen's error, suggestions and key hints. Each now gives ground in its own
+  way — the filter prompt drops its explanation and then its hint but never
+  what you typed; the popups cap to the screen; the startup screen wraps to it
+  — and View() truncates as a last resort so the invariant holds whatever a
+  future composer does.
 
 - Journal messages and service text containing wide Unicode characters, such
   as CJK text or emoji, now respect terminal-cell widths instead of overflowing

@@ -157,7 +157,7 @@ func (m *model) openMenu(unit string, x, y int) {
 	// and lands on the footer, which reads as a rendering fault rather than as
 	// a popup.
 	h := len(unitActions) + 2
-	w := menuWidth(unit)
+	w := min(menuWidth(unit), max(8, m.width-2))
 	if x+w > m.width-1 {
 		x = max(1, m.width-1-w)
 	}
@@ -166,6 +166,13 @@ func (m *model) openMenu(unit string, x, y int) {
 		y = max(top, bottom-h)
 	}
 	m.menu = ctxMenu{open: true, unit: unit, x: x, y: y}
+}
+
+// menuBoxWidth is how wide the popup is actually drawn — the one answer the
+// box, the anchor and the hit-test all use, so a click lands where the frame
+// is. Capping it in only one of the three put the edge somewhere else.
+func (m model) menuBoxWidth() int {
+	return min(menuWidth(m.menu.unit), max(8, m.width-2))
 }
 
 // menuMaxWidth keeps the popup a popup. Template and device-mapped units have

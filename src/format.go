@@ -195,3 +195,13 @@ func wrapRunes(s string, w int) []string {
 func shortUnit(name string) string {
 	return unescapeUnit(strings.TrimSuffix(name, ".service"))
 }
+
+// tailCells keeps the last w terminal cells of s. It is for the filter editor
+// on a terminal narrower than what has been typed: the end of the text is
+// where the cursor is, so the end is what to show.
+func tailCells(s string, w int) string {
+	if n := ansi.StringWidth(s); n > w {
+		return ansi.TruncateLeft(s, n-w, "")
+	}
+	return s
+}

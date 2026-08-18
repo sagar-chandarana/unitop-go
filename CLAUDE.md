@@ -156,6 +156,12 @@ These are decisions, not accidents. Change them deliberately, not incidentally.
   unit whose output goes to a serial console leaves carriage returns in it;
   raw, they move the cursor, repaint the screen and make every width
   calculation wrong. When adding a field, sanitise it at ingest, not at render.
+- **No line may be wider than the terminal.** One that is wraps, and takes the
+  rest of the screen with it. `TestEveryModeFitsEverySize` renders every mode
+  at every awkward size with double-width and emoji fixtures and checks it;
+  `TestComposersFitWithoutTheBackstop` checks the composers fit unaided, so the
+  truncation in `View()` stays a backstop rather than becoming the mechanism.
+  Below `minWidth`×`minHeight` the answer is to say so, not to lay out harder.
 - **An overlay covers its own width, not the rest of the line.** `overlayMenu`
   rebuilds each covered row as prefix + box + `sliceANSI(rest)`. Dropping the
   tail blanks out half the screen.

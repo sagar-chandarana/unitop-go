@@ -873,7 +873,7 @@ func (m model) menuItemAt(x, y int) int {
 	if !m.menu.open {
 		return -1
 	}
-	w := menuWidth(m.menu.unit)
+	w := m.menuBoxWidth()
 	i := y - m.menu.y - 1
 	if x < m.menu.x || x >= m.menu.x+w || i < 0 || i >= len(unitActions) {
 		return -1

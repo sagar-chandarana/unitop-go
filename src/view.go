@@ -159,40 +159,99 @@ func (m model) logDisplayTotal() int {
 
 // ---------- top level ----------
 
+// The smallest terminal unitop will draw on. Below this there is no useful
+// layout to be had — at 30 columns the unit names alone do not fit, and at 8
+// rows the table is two units deep — so it says so instead of rendering
+// something misshapen and pretending.
+const (
+	minWidth  = 40
+	minHeight = 10
+)
+
 func (m model) View() string {
 	if !m.ready && m.width == 0 {
 		return "starting…"
 	}
+	if m.width < minWidth || m.height < minHeight {
+		return strings.Join(m.viewTooSmall(), "\n")
+	}
+	// The startup screen owns the whole terminal, but it goes through the same
+	// tail as everything else — it is exactly the screen you see when something
+	// is wrong, so it is the last one that should be allowed to break its own
+	// layout with a long hostname or a long error.
+	var lines []string
 	if !m.connected {
-		return strings.Join(m.viewStartup(), "\n")
-	}
-	lines := m.viewHost()
-	if m.help {
-		lines = append(lines, m.viewHelp()...)
+		lines = m.viewStartup()
 	} else {
-		lines = append(lines, m.viewBody()...)
+		lines = m.viewHost()
+		if m.help {
+			lines = append(lines, m.viewHelp()...)
+		} else {
+			lines = append(lines, m.viewBody()...)
+		}
+		lines = append(lines, m.viewFooter())
 	}
-	lines = append(lines, m.viewFooter())
 
 	for len(lines) < m.height {
 		lines = append(lines, "")
 	}
 	lines = lines[:m.height]
-	if m.menu.open {
+	if m.menu.open && m.connected {
 		lines = m.overlayMenu(lines)
 	}
 
-	// Start every styled line from a clean slate. Each line we compose is
-	// already balanced, but the trailing reset does not always survive the
-	// renderer, and one bold error line in the log pane then bleeds bold into
-	// the row beneath it. Resetting up front makes a line's appearance depend
-	// on nothing but itself.
 	for i, l := range lines {
-		if strings.Contains(l, "\x1b[") {
-			lines[i] = "\x1b[0m" + l
+		// Nothing may be wider than the terminal. A line that overruns wraps,
+		// and a wrapped line pushes every line below it down one — so a single
+		// long string does not spoil itself, it spoils the whole screen. Each
+		// composer is expected to fit its own line; this is the backstop for
+		// when one does not, and it is cheap because it only cuts what is
+		// already too long.
+		lines[i] = truncANSI(l, m.width)
+
+		// And start every styled line from a clean slate. Each line we compose
+		// is already balanced, but the trailing reset does not always survive
+		// the renderer, and one bold error line in the log pane then bleeds
+		// bold into the row beneath it.
+		if strings.Contains(lines[i], "\x1b[") {
+			lines[i] = "\x1b[0m" + lines[i]
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// viewTooSmall replaces the whole UI on a terminal there is no laying out. It
+// says what is wrong and what would fix it, in whatever room there is, and it
+// is the one screen allowed to assume almost none: each line degrades to a
+// shorter form and then to nothing rather than wrapping.
+func (m model) viewTooSmall() []string {
+	size := fmt.Sprintf("%d×%d", m.width, m.height)
+	need := fmt.Sprintf("%d×%d", minWidth, minHeight)
+
+	var body []string
+	add := func(alts ...string) {
+		for _, a := range alts {
+			if lipgloss.Width(a) <= m.width {
+				body = append(body, a)
+				return
+			}
+		}
+	}
+	add(stBad.Render("terminal too small"), stBad.Render("too small"), stBad.Render("small"))
+	add(stSubtle.Render(size+", unitop needs "+need), stSubtle.Render(size+" < "+need), stSubtle.Render(need))
+	add("", " ")
+	add(stFaint.Render("resize the window, or q to quit"), stFaint.Render("resize, or q"), stKey.Render("q"))
+
+	lines := make([]string, m.height)
+	top := max(0, (m.height-len(body))/2)
+	for i := range lines {
+		if i < top || i-top >= len(body) {
+			continue
+		}
+		l := body[i-top]
+		lines[i] = strings.Repeat(" ", max(0, (m.width-lipgloss.Width(l))/2)) + l
+	}
+	return lines
 }
 
 // ---------- startup ----------
@@ -215,8 +274,11 @@ func (m model) viewStartup() []string {
 		if m.r.host != "" {
 			what = "connecting to " + target
 		}
+		// The spinner and its two spaces are three cells the host name cannot
+		// have; a long one is otherwise exactly what pushes this off the edge.
 		body = append(body,
-			lipgloss.NewStyle().Foreground(colMagenta).Render(frame)+"  "+stBase.Render(what+"…"),
+			lipgloss.NewStyle().Foreground(colMagenta).Render(frame)+"  "+
+				stBase.Render(truncRunes(what+"…", max(6, m.width-3))),
 			"",
 			stFaint.Render("q  quit"),
 		)
@@ -231,27 +293,53 @@ func (m model) viewStartup() []string {
 		case m.r.host != "":
 			head = "cannot reach " + target
 		}
-		body = append(body, stBad.Render("✗  "+head), "")
-		for _, l := range wrapWords(m.err, min(72, max(20, m.width-6))) {
+		// Every part of this wraps to the terminal, not to a comfortable
+		// width: a long hostname, a long ssh error and a long suggestion are
+		// exactly what this screen exists to show, and it is the screen you are
+		// looking at when something is already wrong.
+		wrap := min(72, max(12, m.width-6))
+		for i, l := range wrapWords("✗  "+head, wrap) {
+			if i == 0 {
+				body = append(body, stBad.Render(l))
+				continue
+			}
+			body = append(body, stBad.Render("   "+l))
+		}
+		body = append(body, "")
+		for _, l := range wrapWords(m.err, wrap) {
 			body = append(body, lipgloss.NewStyle().Foreground(colRed).Render(l))
 		}
 		body = append(body, "", stColHead.Render("try:"))
 		for _, s := range troubleshoot(m.err, m.r.host) {
-			body = append(body, stSubtle.Render("  • ")+stBase.Render(s))
+			for i, l := range wrapWords(s, max(8, wrap-4)) {
+				if i == 0 {
+					body = append(body, stSubtle.Render("  • ")+stBase.Render(l))
+					continue
+				}
+				body = append(body, stBase.Render("    "+l))
+			}
 		}
 		status := fmt.Sprintf("attempt %d · retrying every %gs", m.attempts, m.interval.Seconds())
 		if m.fatal {
 			status = "not retrying" // nothing about this will change on its own
 		}
-		body = append(body, "", stFaint.Render(status+"    ")+stKey.Render("R")+stFaint.Render(" retry now    ")+
-			stKey.Render("q")+stFaint.Render(" quit"))
+		keys := stKey.Render("R") + stFaint.Render(" retry now    ") +
+			stKey.Render("q") + stFaint.Render(" quit")
+		if lipgloss.Width(status)+4+lipgloss.Width(keys) <= wrap {
+			body = append(body, "", stFaint.Render(status+"    ")+keys)
+		} else {
+			body = append(body, "", stFaint.Render(status), keys)
+		}
 	}
 
 	// Centre the block, and left-align its lines with each other so the
-	// wrapped error and the bullet list do not stagger.
+	// wrapped error and the bullet list do not stagger. Everything above wraps
+	// to a comfortable width; this is the floor, for a terminal so narrow that
+	// even a key hint does not fit on one line.
 	inner := 0
-	for _, l := range body {
-		inner = max(inner, lipgloss.Width(l))
+	for i, l := range body {
+		body[i] = truncANSI(l, m.width)
+		inner = max(inner, lipgloss.Width(body[i]))
 	}
 	left := max(0, (m.width-inner)/2)
 	title := stHeader.Render("unitop")
@@ -1219,7 +1307,9 @@ func stripSGR(s string) string {
 }
 
 func (m model) menuBox() []string {
-	w := menuWidth(m.menu.unit)
+	// Never wider than the terminal: a box cut off at the right edge reads as a
+	// broken frame rather than a popup.
+	w := m.menuBoxWidth()
 	border := lipgloss.NewStyle().Foreground(colMagenta)
 	out := []string{border.Render("╭") + stHeader.Render(pad(" "+truncRunes(shortUnit(m.menu.unit), w-3)+" ", w-2)) + border.Render("╮")}
 	for i, a := range unitActions {
@@ -1240,7 +1330,7 @@ func (m model) confirmBox() []string {
 	a := m.menu.action()
 	text := fmt.Sprintf(" %s %s? ", a.label, shortUnit(m.menu.unit))
 	hint := " y = yes, any other key = cancel "
-	w := max(len([]rune(text)), len([]rune(hint))) + 2
+	w := min(max(ansi.StringWidth(text), ansi.StringWidth(hint))+2, max(8, m.width-2))
 	border := lipgloss.NewStyle().Foreground(colRed)
 	return []string{
 		border.Render("╭" + strings.Repeat("─", w-2) + "╮"),
@@ -1302,14 +1392,34 @@ func (m model) footerKeys() [][2]string {
 func (m model) viewFooter() string {
 	if m.filterInput {
 		// Say what the text will do, not which pane it belongs to: the two
-		// filters do genuinely different things and neither is guessable.
-		what, text := "show units whose name or description contains", m.filter
+		// filters do genuinely different things and neither is guessable. But
+		// what you are typing matters more than the explanation of it, so the
+		// wording gives ground first, then the hint, and the text itself is the
+		// last thing to go.
+		long, short, text := "show units whose name or description contains", "filter units:", m.filter
 		if m.filterLogs {
-			what, text = "show journal lines matching", m.logFilt.grep
+			long, short, text = "show journal lines matching", "search log:", m.logFilt.grep
 		}
-		return stSubtle.Render(what+" ") + stFilter.Render(text) +
-			lipgloss.NewStyle().Foreground(colMagenta).Render("▏") +
-			stFaint.Render("  enter apply · esc clear")
+		caret := lipgloss.NewStyle().Foreground(colMagenta).Render("▏")
+		typed := stFilter.Render(text)
+		for _, v := range []struct {
+			label string
+			hint  bool
+		}{{long, true}, {short, true}, {short, false}, {"", false}} {
+			line := typed + caret
+			if v.label != "" {
+				line = stSubtle.Render(v.label+" ") + line
+			}
+			if v.hint {
+				line += stFaint.Render("  enter apply · esc clear")
+			}
+			if lipgloss.Width(line) <= m.width {
+				return line
+			}
+		}
+		// Narrower than the text itself: keep the end of it, which is where the
+		// cursor is and what was just typed.
+		return stFilter.Render(tailCells(text, max(1, m.width-1))) + caret
 	}
 	if m.toast != "" {
 		st, mark := stGood, "✓ "
@@ -1427,7 +1537,7 @@ func (m model) helpLines() []string {
 		"Reading logs needs membership of systemd-journal, or root.",
 		"Unit actions need privilege: run as root, or pass -sudo for sudo -n.",
 	} {
-		for _, l := range wrapWords(n, max(20, m.width-4)) {
+		for _, l := range wrapWords(n, max(8, m.width-4)) {
 			notes = append(notes, stSubtle.Render("  "+l))
 		}
 	}
@@ -1435,6 +1545,9 @@ func (m model) helpLines() []string {
 	out := []string{stHeader.Render("unitop — keys"), ""}
 	h := m.contentHeight()
 	// Two columns on a wide screen, which is usually enough to fit the lot.
+	// The key rows are written to a comfortable width rather than the terminal's,
+	// so they are cut to it here — the key is on the left, so what goes is the
+	// tail of the description.
 	if len(out)+len(body) > h && m.width >= 110 {
 		half := (len(body) + 1) / 2
 		for i := 0; i < half; i++ {
@@ -1457,6 +1570,9 @@ func (m model) helpLines() []string {
 func (m model) viewHelp() []string {
 	all := m.helpLines()
 	h := m.contentHeight()
+	for i, l := range all {
+		all[i] = truncANSI(l, m.width)
+	}
 	if len(all) <= h {
 		for len(all) < h {
 			all = append(all, "")
@@ -1465,13 +1581,22 @@ func (m model) viewHelp() []string {
 	}
 
 	start := min(max(m.helpScroll, 0), len(all)-h)
-	out := append([]string(nil), all[start:start+h]...)
+	out := make([]string, 0, h)
+	for _, l := range all[start : start+h] {
+		out = append(out, truncANSI(l, m.width))
+	}
 	// Say which way there is more, on a line of its own at the edge it is at.
+	// The hint about how to scroll goes first if it does not fit: which way
+	// there is more is the part worth the space.
 	if start > 0 {
-		out[0] = stFaint.Render("  ↑ more above")
+		out[0] = stFaint.Render(truncRunes("  ↑ more above", m.width))
 	}
 	if start+h < len(all) {
-		out[len(out)-1] = stFaint.Render("  ↓ more below — ↑↓ or pgup/pgdn to scroll")
+		below := "  ↓ more below — ↑↓ or pgup/pgdn to scroll"
+		if lipgloss.Width(below) > m.width {
+			below = "  ↓ more below"
+		}
+		out[len(out)-1] = stFaint.Render(truncRunes(below, m.width))
 	}
 	return out
 }
