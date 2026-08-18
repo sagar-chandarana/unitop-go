@@ -63,6 +63,12 @@ to change.
   scroll position carried over, so the pane came up empty — and because follow
   was still off, every batch that arrived pushed the view further up instead
   of filling it in. The view can no longer float above the buffer at all.
+- **`r` refreshes now and `i` inverts the sort.** `r`/`R` were two unrelated
+  commands on one letter, while the other shift pair — `s`/`S` — means the same
+  thing in both directions. `r` is reload nearly everywhere, so it takes that
+  meaning, inverting moves to `i`, and `s`/`S` is the only shift pair left.
+  `R` is unbound; on the startup screen the retry is `r` too. The `-r` flag
+  keeps its letter, since `-i` is the interval.
 - **`esc` pops exactly one thing per press**, innermost first: cancel what you
   are typing, close the menu or the help, clear the focused pane's filter,
   leave the full view, return focus to the table. Three things fall out of

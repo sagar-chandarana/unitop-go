@@ -242,7 +242,7 @@ func (m model) viewStartup() []string {
 		if m.fatal {
 			status = "not retrying" // nothing about this will change on its own
 		}
-		body = append(body, "", stFaint.Render(status+"    ")+stKey.Render("R")+stFaint.Render(" retry now    ")+
+		body = append(body, "", stFaint.Render(status+"    ")+stKey.Render("r")+stFaint.Render(" retry now    ")+
 			stKey.Render("q")+stFaint.Render(" quit"))
 	}
 
@@ -1248,7 +1248,7 @@ func (m model) footerKeys() [][2]string {
 		keys = append(keys,
 			[2]string{"/", "filter units"},
 			[2]string{"s", "sort"},
-			[2]string{"r", "rev"},
+			[2]string{"i", "invert"},
 			[2]string{"t", "tree"},
 			[2]string{"a", "all"})
 	}
@@ -1348,7 +1348,7 @@ func (m model) helpLines() []string {
 		{"", "— the unit list —"},
 		{"/", "show units whose name or description contains the text"},
 		{"s / S", "sort by the next / previous visible column"},
-		{"r", "reverse the sort"},
+		{"i", "invert the sort order"},
 		{"t", "tree view, grouped by slice"},
 		{"a", "include inactive/dead units"},
 		{"← →", "collapse / expand a slice in tree mode"},
@@ -1366,7 +1366,7 @@ func (m model) helpLines() []string {
 		{"", "— anywhere —"},
 		{"l", "show or hide the log pane"},
 		{"p", "pause polling"},
-		{"R", "refresh now"},
+		{"r", "refresh now"},
 		{"+ / -", "faster / slower refresh"},
 		{"q", "quit"},
 	}

@@ -42,7 +42,7 @@ func TestKeysBelongToTheFocusedPane(t *testing.T) {
 	// Log focused: the table's are.
 	m.focus = focusLogs
 	sortBy, reverse, tree, showAll := m.sortBy, m.reverse, m.tree, m.showAll
-	for _, k := range []string{"s", "S", "r", "t", "a"} {
+	for _, k := range []string{"s", "S", "i", "t", "a"} {
 		m.handleKey(keyOf(k))
 	}
 	if m.sortBy != sortBy || m.reverse != reverse || m.tree != tree || m.showAll != showAll {
@@ -72,7 +72,7 @@ func TestFooterFollowsTheFocus(t *testing.T) {
 	m := focusModel(t)
 
 	foot := stripANSI(m.viewFooter())
-	for _, want := range []string{"/ filter units", "s sort", "t tree", "a all"} {
+	for _, want := range []string{"/ filter units", "s sort", "i invert", "t tree", "a all"} {
 		if !strings.Contains(foot, want) {
 			t.Errorf("table footer is missing %q: %s", want, foot)
 		}
@@ -90,7 +90,7 @@ func TestFooterFollowsTheFocus(t *testing.T) {
 			t.Errorf("log footer is missing %q: %s", want, foot)
 		}
 	}
-	for _, gone := range []string{"s sort", "r rev", "t tree", "a all", "filter units"} {
+	for _, gone := range []string{"s sort", "i invert", "t tree", "a all", "filter units"} {
 		if strings.Contains(foot, gone) {
 			t.Errorf("log footer offers the table's %q: %s", gone, foot)
 		}

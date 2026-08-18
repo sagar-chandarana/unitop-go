@@ -124,6 +124,10 @@ These are decisions, not accidents. Change them deliberately, not incidentally.
   `footerKeys()` consult — they must never disagree. Anything anchored to a
   table row needs a second answer for the full view — see `menuAnchor()`, which
   otherwise put the popup wherever the invisible cursor happened to be.
+- **Shift means "the counterpart", or it is not used.** `s`/`S` is next/previous
+  sort column, and it is the only shift pair. `r`/`R` used to be reverse and
+  refresh — two unrelated commands sharing a letter — which is why inverting is
+  now `i` and refresh is `r`.
 - **One key per motion, and motion is named keys.** The vim and readline
   aliases were removed on purpose: every letter an alias holds is a letter
   unavailable for a command, and each one is a second thing to document and

@@ -35,7 +35,7 @@ const (
 var (
 	tableKeys = map[string]bool{
 		"s": true, "S": true, // sort column
-		"r": true, // reverse
+		"i": true, // invert the sort order
 		"t": true, // tree
 		"a": true, // include inactive
 	}
@@ -322,7 +322,7 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
-		case "R", "enter":
+		case "r", "enter":
 			// An explicit retry clears a fatal verdict: the user may have just
 			// upgraded systemd on the other end.
 			if !m.polling {
@@ -428,7 +428,7 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.sortBy = m.nextVisibleSort(-1)
 		m.rebuild()
 		return m, nil
-	case "r":
+	case "i":
 		m.reverse = !m.reverse
 		m.rebuild()
 		return m, nil
@@ -459,7 +459,9 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "p":
 		m.paused = !m.paused
 		return m, nil
-	case "R":
+	case "r":
+		// One poll now, out of band from the timer. It ignores `paused`, which
+		// is the point: p freezes the table and r steps it one frame.
 		if !m.polling {
 			m.polling = true
 			return m, m.pollCmd()

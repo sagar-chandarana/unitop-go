@@ -134,7 +134,7 @@ func TestStartupKeysAreLimited(t *testing.T) {
 		}
 	}
 
-	if _, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("R")}); cmd == nil {
+	if _, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")}); cmd == nil {
 		t.Error("R should retry while disconnected")
 	}
 	m.polling = false
