@@ -129,13 +129,16 @@ type model struct {
 	logEpoch     int        // bumped on every change to logs, to invalidate totals
 	totals       *logTotals // memoised wrapped height of the buffer
 	loadingOlder bool
-	logAtStart   bool      // the journal has nothing older than what we hold
-	logFilt      logFilter // applied by journalctl, so it searches the whole log
-	filterLogs   bool      // the filter editor is aimed at the log, not the table
-	logLoadErr   string    // why the last page failed, if it did
-	logWrap      bool
-	showLogs     bool
-	fullView     bool
+	// logBacklogDone: the first phase of the stream has finished, so an empty
+	// pane is empty because there is nothing, not because it is still reading.
+	logBacklogDone bool
+	logAtStart     bool      // the journal has nothing older than what we hold
+	logFilt        logFilter // applied by journalctl, so it searches the whole log
+	filterLogs     bool      // the filter editor is aimed at the log, not the table
+	logLoadErr     string    // why the last page failed, if it did
+	logWrap        bool
+	showLogs       bool
+	fullView       bool
 
 	menu     ctxMenu
 	toast    string
@@ -274,6 +277,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case journalBatch:
 		if msg.gen != m.logGen {
 			return m, nil // belongs to a unit we have already navigated away from
+		}
+		if msg.backlogDone {
+			m.logBacklogDone = true
 		}
 		if len(msg.lines) > 0 {
 			m.logs = append(m.logs, msg.lines...)
@@ -986,6 +992,7 @@ func (m *model) syncJournal() tea.Cmd {
 	// old one's position over left the view above an empty buffer, and every
 	// batch that arrived pushed it further up rather than filling it in.
 	m.logScroll, m.logFollow = 0, true
+	m.logBacklogDone = false
 	m.loadingOlder, m.logAtStart, m.logLoadErr = false, false, ""
 	m.logGen++
 	if want == "" {

@@ -294,6 +294,19 @@ earlier, does not render ANSI backgrounds at all; `termshot` does.)
   tree committed; `vendorHash = null` means nix trusts what is checked in.
 - Reading the journal needs the `systemd-journal` group or root. Without it the
   log pane shows journalctl's own complaint — that is deliberate, not a bug.
+- **`-g` is not a seek, `-p` is.** With `-f`, `journalctl -n N -g PATTERN` seeks
+  back N *raw* entries and only then greps them, so it cannot see a match older
+  than that. `-p` is fine, because `PRIORITY` is indexed. This is why the stream
+  is two commands (`startJournal`); do not collapse it back into one.
+- **`-n 0` means "replay nothing", not "start with nothing".** It silently
+  defeats `--after-cursor` and `--since`. The tail must not pass it, or entries
+  written between the backlog and the tail are dropped.
+- **`-n N` output order depends on the filter**: with `-g` it comes back
+  newest-first, with `-p` oldest-first. Always pass `--reverse` explicitly and
+  flip it yourself, as `backlogArgs` and `fetchOlder` do.
+- These are verified against a real journal, not asserted: `journal_backlog_test.go`
+  builds one with `systemd-journal-remote` and runs the actual argument lists
+  through `journalctl -D`. It skips where those are unavailable.
 - The NET columns are empty on most hosts because IP accounting is off by
   default. `DefaultIPAccounting=yes` (or per-unit `IPAccounting=yes`) enables
   them.

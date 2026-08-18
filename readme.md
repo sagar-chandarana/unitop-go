@@ -262,10 +262,17 @@ the line breaks they meant, and a multi-line entry stays multi-line.
 `/` with the log focused searches it, and `e` cycles the level shown
 (everything → warning and above → error and above). Both are handed to
 journalctl as `-g` and `-p`, so they search the **whole journal**, not just the
-entries already fetched — and the follow stream and the backwards paging both
-honour them. `-g` is a PCRE, case-insensitive while the pattern is lowercase.
-An active filter is named in the pane's title — `matching "denied", error and
-above` — so a quiet log is never mistaken for a broken one.
+entries already fetched — the last 500 *matches*, however far back they lie —
+and the backwards paging honours them too. `-g` is a PCRE, case-insensitive
+while the pattern is lowercase. An active filter is named in the pane's title —
+`matching "denied", error and above` — so a quiet log is never mistaken for a
+broken one, and a pane that is genuinely empty says which it is.
+
+Getting that right needs two commands rather than one. `journalctl -n 500 -f -g
+PATTERN` looks like it searches the journal, but with `-f` it seeks back 500
+**raw** entries and only then applies the pattern, so matches older than that
+are invisible however many there are. unitop reads the backlog with a command
+that terminates, then tails from the last entry's cursor.
 
 ## What the columns mean
 

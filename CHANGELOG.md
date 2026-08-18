@@ -63,12 +63,35 @@ to change.
   scroll position carried over, so the pane came up empty — and because follow
   was still off, every batch that arrived pushed the view further up instead
   of filling it in. The view can no longer float above the buffer at all.
+- **The log search really does search the whole journal now.** `journalctl -n
+  500 -f -g PATTERN` looks like it does, but with `-f` journalctl seeks back
+  500 **raw** entries and only then applies the pattern — so a search found
+  nothing older than the last 500 lines of the unit, however many matches were
+  sitting in the journal. Measured on a 1200-entry journal whose 100 matches
+  were the oldest: it returned none of them, with the boundary exactly at the
+  500th entry from the end. `-p` was never affected, because `PRIORITY` is
+  indexed and journalctl can seek by it.
+
+  The stream is now two commands: a backlog that terminates — so it can search
+  properly, and so it has an end — and then a tail resuming from the last
+  entry's cursor. `-n 0` is deliberately absent from the tail: it reads as
+  "start with nothing" but journalctl takes it as "replay nothing", which
+  silently defeats `--after-cursor` and would drop whatever the unit wrote
+  between the two commands.
+- A log search that matches nothing no longer shows a red error. `journalctl
+  -g` exits 1 when its pattern matches nothing and says nothing on stderr about
+  it, so an empty result read as a failure to open the journal. A real failure
+  — permissions, the usual one — exits with something to say, and still
+  reports. The same applied to paging backwards, where running out of older
+  matches claimed the page could not be loaded instead of saying it had reached
+  the beginning.
 - An empty log pane says why. `journalctl -f` prints nothing at all when the
   filter matches nothing, so the pane sat on `waiting for journal…` as though
   it were stuck when in fact the search had finished and come up empty. It now
-  distinguishes three cases: still reading (with a spinner, for the moment
-  before the first entries land), nothing matches the filter — naming the
-  filter and how to clear it — and a unit that has genuinely written nothing.
+  distinguishes three cases: still reading, nothing matches the filter — naming
+  the filter and how to clear it — and a unit that has genuinely written
+  nothing. Which of the three it is comes from the stream, not from a timer:
+  the backlog is its own command, so it ends.
 - A fatal verdict no longer latches. If an unsupported-systemd error arrives
   after unitop has already connected — a downgrade, or a poll that returns a
   garbled version — the tick suppressed itself and nothing ever cleared the

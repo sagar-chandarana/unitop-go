@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -100,6 +102,11 @@ func fetchOlder(parent context.Context, r runner, unit, cursor string, f logFilt
 		}, f.args()...)
 		out, err := r.command(ctx, "journalctl", args...).Output()
 		if err != nil {
+			// Nothing older matched, which is the start of the journal as far
+			// as this filter is concerned — not a failure to read it.
+			if noMatches(err) {
+				return olderBatch{gen: gen, atEnd: true}
+			}
 			return olderBatch{gen: gen, err: sanitizeText(wrapExec(err).Error())}
 		}
 
@@ -133,15 +140,18 @@ type journalBatch struct {
 	gen   int
 	lines []logLine
 	done  bool
+	// backlogDone marks the end of the first phase: everything after it is
+	// live. It is what lets an empty pane say "nothing matches" instead of
+	// "still reading", without guessing at how long a first batch may take.
+	backlogDone bool
 }
 
 type journalStream struct {
-	gen     int
-	unit    string
-	filter  logFilter // what this stream was started with
-	started time.Time // to tell "still reading" from "nothing matches"
-	ch      chan journalBatch
-	cancel  context.CancelFunc
+	gen    int
+	unit   string
+	filter logFilter // what this stream was started with
+	ch     chan journalBatch
+	cancel context.CancelFunc
 }
 
 func (j *journalStream) stop() {
@@ -151,86 +161,203 @@ func (j *journalStream) stop() {
 	j.cancel()
 }
 
-// startJournal follows one unit's journal. Backlog lines arrive first, then it
-// tails. Stderr is folded into the stream as meta lines so permission problems
-// are visible in the pane instead of silently producing an empty log.
+// journalFields is what we read of each entry. __CURSOR comes back regardless,
+// which is what makes paging backwards possible.
+const journalFields = "--output-fields=MESSAGE,PRIORITY,SYSLOG_IDENTIFIER,_PID"
+
+// startJournal reads one unit's journal in two phases: a backlog that ends, and
+// then a tail that begins exactly where it left off.
+//
+// It used to be one command — `journalctl -n 500 -f <filter>` — which was wrong
+// for `-g`. With `-f`, journalctl seeks back N *raw* entries and only then
+// applies the pattern, so a search matched nothing older than the last 500
+// lines however much of it was in the journal. Measured on a 1200-entry
+// journal whose 100 matches were the oldest: the one-command form found none of
+// them, and the boundary sat exactly at the 500th entry from the end. `-p` was
+// never affected, because PRIORITY is indexed and journalctl can seek by it.
+//
+// Splitting the phases also means the backlog *ends*, so an empty pane knows
+// whether it is still reading or has genuinely found nothing.
+//
+// Stderr is folded into the stream as meta lines so permission problems are
+// visible in the pane instead of silently producing an empty log.
 func startJournal(parent context.Context, r runner, unit string, f logFilter, backlog, gen int) *journalStream {
 	ctx, cancel := context.WithCancel(parent)
 	ch := make(chan journalBatch, 64)
-	js := &journalStream{gen: gen, unit: unit, filter: f, started: time.Now(), ch: ch, cancel: cancel}
-
-	args := append([]string{
-		"-u", unit,
-		"-n", strconv.Itoa(backlog),
-		"-f", "--no-pager",
-		"-o", "json",
-		"--output-fields=MESSAGE,PRIORITY,SYSLOG_IDENTIFIER,_PID",
-	}, f.args()...)
-	cmd := r.command(ctx, "journalctl", args...)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		go emitMeta(ctx, ch, gen, "cannot open journalctl stdout: "+err.Error())
-		return js
-	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
-		go emitMeta(ctx, ch, gen, "cannot run journalctl: "+err.Error())
-		return js
-	}
+	js := &journalStream{gen: gen, unit: unit, filter: f, ch: ch, cancel: cancel}
 
 	go func() {
 		defer close(ch)
-		sc := bufio.NewScanner(stdout)
-		sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-		pending := make([]logLine, 0, 64)
-		flush := func() bool {
-			if len(pending) == 0 {
-				return true
-			}
+		send := func(b journalBatch) bool {
 			select {
-			case ch <- journalBatch{gen: gen, lines: pending}:
-				pending = make([]logLine, 0, 64)
+			case ch <- b:
 				return true
 			case <-ctx.Done():
 				return false
 			}
 		}
-		for sc.Scan() {
-			line, ok := parseJournalJSON(sc.Bytes())
-			if !ok {
-				continue
+		// backlogDone rides on every terminal message too. It is what stops the
+		// pane saying "reading the journal…", and the spinner it drives re-arms
+		// itself every 120ms for as long as that is true — a stream that failed
+		// before reporting one would tick forever.
+		meta := func(msg string) {
+			send(journalBatch{gen: gen, done: true, backlogDone: true, lines: []logLine{
+				{ts: time.Now(), prio: 3, msg: sanitizeText(msg), meta: true}}})
+		}
+
+		// Phase one. Note the time first: with nothing in the backlog there is
+		// no cursor to resume from, and following from `now` would miss
+		// anything written while this command ran.
+		since := time.Now()
+		lines, err := readBacklog(ctx, r, unit, f, backlog)
+		if err != nil {
+			meta(err.Error())
+			return
+		}
+		last := ""
+		for i := len(lines) - 1; i >= 0; i-- {
+			if lines[i].cursor != "" {
+				last = lines[i].cursor
+				break
 			}
-			pending = append(pending, line)
-			// Flush when the reader is caught up, or when the burst gets big
-			// enough that holding it back would look like a stall.
-			if len(pending) >= 200 || len(ch) == 0 {
-				if !flush() {
-					return
-				}
-			}
 		}
-		flush()
-		_ = cmd.Wait()
-		msg := sanitizeText(strings.TrimSpace(stderr.String()))
-		if msg == "" {
-			msg = "journal stream ended"
+		if !send(journalBatch{gen: gen, lines: lines, backlogDone: true}) {
+			return
 		}
-		select {
-		case ch <- journalBatch{gen: gen, lines: []logLine{{ts: time.Now(), prio: 4, msg: msg, meta: true}}, done: true}:
-		case <-ctx.Done():
-		}
+
+		// Phase two.
+		followJournal(ctx, r, unit, f, last, since, gen, ch, send)
 	}()
 	return js
 }
 
-func emitMeta(ctx context.Context, ch chan journalBatch, gen int, msg string) {
-	msg = sanitizeText(msg)
-	select {
-	case ch <- journalBatch{gen: gen, lines: []logLine{{ts: time.Now(), prio: 3, msg: msg, meta: true}}, done: true}:
-	case <-ctx.Done():
+// backlogArgs asks for the newest n matching entries. --reverse is explicit
+// because `-n` with `-g` returns newest-first on its own while `-p` returns
+// oldest-first; saying which we want makes the order independent of the filter.
+func backlogArgs(unit string, f logFilter, n int) []string {
+	return append([]string{
+		"-u", unit, "-n", strconv.Itoa(n), "--reverse",
+		"--no-pager", "-o", "json", journalFields,
+	}, f.args()...)
+}
+
+// followArgs tails from `after`, or from `since` when the backlog was empty and
+// there is no cursor to resume from. Either way it replays the gap: the backlog
+// is a separate command, and whatever the unit wrote while it ran belongs on
+// screen.
+//
+// Deliberately no `-n 0`. It reads as "start with nothing", but journalctl
+// takes it as "replay nothing", and it silently defeats both --after-cursor and
+// --since — measured: `-f --after-cursor C` replays the entry after C, and
+// `-f -n 0 --after-cursor C` replays nothing at all. `--since` and
+// `--after-cursor` already bound the replay; the `-n 10` that bare `-f` would
+// otherwise default to does not apply once either is given.
+func followArgs(unit string, f logFilter, after string, since time.Time) []string {
+	args := []string{"-u", unit, "-f", "--no-pager", "-o", "json", journalFields}
+	if after != "" {
+		args = append(args, "--after-cursor", after)
+	} else {
+		args = append(args, "--since", "@"+strconv.FormatInt(since.Unix(), 10))
 	}
-	close(ch)
+	return append(args, f.args()...)
+}
+
+// noMatches reports the one failure that is not one: journalctl exits 1 when a
+// `-g` pattern matches nothing, and says nothing on stderr about it. Reported
+// as an error it becomes a red line in the pane claiming the journal could not
+// be read, which is both alarming and wrong — the search simply found nothing.
+// A real failure, permissions being the usual one, exits with something to say.
+func noMatches(err error) bool {
+	var ee *exec.ExitError
+	return errors.As(err, &ee) && ee.ExitCode() == 1 && len(bytes.TrimSpace(ee.Stderr)) == 0
+}
+
+// readBacklog fetches the newest `n` matching entries, oldest first.
+func readBacklog(ctx context.Context, r runner, unit string, f logFilter, n int) ([]logLine, error) {
+	out, err := r.command(ctx, "journalctl", backlogArgs(unit, f, n)...).Output()
+	if err != nil {
+		if noMatches(err) {
+			return nil, nil
+		}
+		return nil, wrapExec(err)
+	}
+
+	var newestFirst []logLine
+	for _, raw := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		if l, ok := parseJournalJSON([]byte(raw)); ok {
+			newestFirst = append(newestFirst, l)
+		}
+	}
+	lines := make([]logLine, len(newestFirst))
+	for i, l := range newestFirst {
+		lines[len(newestFirst)-1-i] = l
+	}
+	return lines, nil
+}
+
+// followJournal tails the unit, picking up where the backlog left off.
+func followJournal(ctx context.Context, r runner, unit string, f logFilter,
+	after string, since time.Time, gen int, ch chan journalBatch, send func(journalBatch) bool) {
+
+	args := followArgs(unit, f, after, since)
+	fail := func(msg string) {
+		send(journalBatch{gen: gen, done: true, backlogDone: true, lines: []logLine{
+			{ts: time.Now(), prio: 3, msg: sanitizeText(msg), meta: true}}})
+	}
+
+	cmd := r.command(ctx, "journalctl", args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		fail("cannot open journalctl stdout: " + err.Error())
+		return
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		fail("cannot run journalctl: " + err.Error())
+		return
+	}
+
+	sc := bufio.NewScanner(stdout)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	pending := make([]logLine, 0, 64)
+	flush := func() bool {
+		if len(pending) == 0 {
+			return true
+		}
+		if !send(journalBatch{gen: gen, lines: pending}) {
+			return false
+		}
+		pending = make([]logLine, 0, 64)
+		return true
+	}
+
+	for sc.Scan() {
+		line, ok := parseJournalJSON(sc.Bytes())
+		if !ok {
+			continue
+		}
+		pending = append(pending, line)
+		// Flush when the reader is caught up — which for a live tail is every
+		// line — or when the burst gets big enough that holding it back would
+		// look like a stall.
+		if len(pending) >= 200 || len(ch) == 0 {
+			if !flush() {
+				return
+			}
+		}
+	}
+	flush()
+	_ = cmd.Wait()
+	msg := sanitizeText(strings.TrimSpace(stderr.String()))
+	if msg == "" {
+		msg = "journal stream ended"
+	}
+	send(journalBatch{gen: gen, done: true, backlogDone: true, lines: []logLine{
+		{ts: time.Now(), prio: 4, msg: msg, meta: true}}})
 }
 
 type rawEntry struct {

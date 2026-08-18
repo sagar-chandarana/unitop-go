@@ -1058,14 +1058,11 @@ func (m model) emptyLogNotice() []string {
 	return []string{stSubtle.Render("this unit has written nothing to the journal")}
 }
 
-// journalGrace is how long an empty pane stays "reading" before it says the
-// journal has nothing. journalctl gives no end-of-backlog signal, so this is a
-// judgement about how long a first batch may take over ssh, not a fact.
-const journalGrace = 1500 * time.Millisecond
-
-// logStarting is true while a fresh stream has yet to produce anything.
+// logStarting is true while the backlog is still being read. The stream says
+// when that ends — the backlog is its own command, which terminates — so this
+// is a fact, not a guess at how long a first batch might take.
 func (m model) logStarting() bool {
-	return m.journal != nil && len(m.logs) == 0 && time.Since(m.journal.started) < journalGrace
+	return m.journal != nil && !m.logBacklogDone
 }
 
 // logTopMarker reports the state of the backwards paging at the top of the

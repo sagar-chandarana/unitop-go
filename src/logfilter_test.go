@@ -170,17 +170,20 @@ func TestEmptyLogSaysWhy(t *testing.T) {
 	}
 
 	// A stream that has just started is still reading.
-	m.journal = &journalStream{unit: "nginx.service", gen: m.logGen, started: time.Now()}
+	m.journal = &journalStream{unit: "nginx.service", gen: m.logGen}
 	if got := stripANSI(strings.Join(m.emptyLogNotice(), " ")); !strings.Contains(got, "reading the journal") {
 		t.Errorf("just started: %q", got)
 	}
 	if !m.logStarting() {
-		t.Error("a fresh empty stream should count as starting")
+		t.Error("a stream whose backlog has not landed should count as starting")
 	}
 
-	// Once it has had time and produced nothing, say so — and say what is
-	// filtering, since that is the likely reason.
-	m.journal.started = time.Now().Add(-2 * journalGrace)
+	// The backlog command has finished and produced nothing. That is a fact the
+	// stream reports, not a timeout.
+	m.Update(journalBatch{gen: m.logGen, backlogDone: true})
+	if m.logStarting() {
+		t.Error("the backlog-done signal did not land")
+	}
 	if got := stripANSI(strings.Join(m.emptyLogNotice(), " ")); !strings.Contains(got, "nothing to the journal") {
 		t.Errorf("empty and settled: %q", got)
 	}
