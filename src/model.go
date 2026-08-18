@@ -251,6 +251,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.err = ""
 			m.connected = true
+			// A poll that worked is the evidence that whatever we called fatal
+			// is not. Leaving the flag set froze polling for good: the tick
+			// suppresses itself while fatal, so the display stopped updating
+			// and only manual refreshes moved it, forever.
+			m.fatal = false
 			m.units = msg.units
 			m.host = msg.host
 		}
@@ -461,9 +466,11 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "R":
 		// One poll now, out of band from the timer. It ignores `paused`, which
-		// is the point: p freezes the table and R steps it one frame.
+		// is the point: p freezes the table and R steps it one frame. Asking
+		// explicitly also clears a fatal verdict, as it does on the startup
+		// screen — the host may have been upgraded since.
 		if !m.polling {
-			m.polling = true
+			m.polling, m.fatal = true, false
 			return m, m.pollCmd()
 		}
 		return m, nil

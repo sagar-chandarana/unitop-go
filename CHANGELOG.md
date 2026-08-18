@@ -63,6 +63,12 @@ to change.
   scroll position carried over, so the pane came up empty — and because follow
   was still off, every batch that arrived pushed the view further up instead
   of filling it in. The view can no longer float above the buffer at all.
+- A fatal verdict no longer latches. If an unsupported-systemd error arrives
+  after unitop has already connected — a downgrade, or a poll that returns a
+  garbled version — the tick suppressed itself and nothing ever cleared the
+  flag, so the display froze permanently and only manual refreshes moved it. A
+  successful poll clears it, `R` clears it, and while it is set the host bar
+  says `NOT POLLING — R to retry` instead of the screen quietly going stale.
 - **`esc` pops exactly one thing per press**, innermost first: cancel what you
   are typing, close the menu or the help, clear the focused pane's filter,
   leave the full view, return focus to the table. Three things fall out of

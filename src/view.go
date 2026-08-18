@@ -435,9 +435,15 @@ func (m model) viewHost() []string {
 	if m.filter != "" {
 		mode = append(mode, stFilter.Render("/"+m.filter))
 	}
-	if m.paused {
+	switch {
+	case m.fatal:
+		// The tick suppresses itself while fatal, so the screen has stopped
+		// updating. Say so, and name the key, because the footer is showing the
+		// error instead of the hints.
+		mode = append(mode, stBad.Render("NOT POLLING — R to retry"))
+	case m.paused:
 		mode = append(mode, stWarn.Render("PAUSED"))
-	} else {
+	default:
 		mode = append(mode, stSubtle.Render(fmt.Sprintf("%gs", m.interval.Seconds())))
 	}
 
