@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"os"
 	"os/exec"
@@ -324,5 +325,67 @@ func TestTailHonoursTheFilter(t *testing.T) {
 	}
 	if len(m.logs) != 2 {
 		t.Errorf("hold %d entries, want exactly the 2 matching ones", len(m.logs))
+	}
+}
+
+// bufio.Scanner was the wrong primitive here: an entry past its buffer makes
+// Scan return false with ErrTooLong, and nothing checked Err(), so one
+// oversized entry ended the tail for good. Whether journalctl can emit one is
+// another question — journald's own LineMax caps captured stdout, but a native
+// entry has no such bound and -o json escaping inflates it — but the reader
+// must not be stoppable that way regardless.
+func TestOversizedEntryDoesNotEndTheStream(t *testing.T) {
+	huge := strings.Repeat("x", maxEntryBytes+1024)
+	input := `{"MESSAGE":"before"}` + "\n" +
+		`{"MESSAGE":"` + huge + `"}` + "\n" +
+		`{"MESSAGE":"after"}` + "\n"
+
+	br := bufio.NewReaderSize(strings.NewReader(input), 4096)
+	var got []string
+	for {
+		raw, err := readEntryLine(br)
+		if len(raw) > 0 {
+			if l, ok := parseJournalJSON(raw); ok {
+				got = append(got, l.msg)
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	if len(got) != 3 {
+		t.Fatalf("read %d entries, want 3 (the oversized one becomes a note): %q", len(got), got)
+	}
+	if got[0] != "before" || got[2] != "after" {
+		t.Errorf("the entries around the oversized one were lost: %q", got)
+	}
+	if !strings.Contains(got[1], "larger than") {
+		t.Errorf("the oversized entry was not replaced with a note: %q", got[1])
+	}
+}
+
+// A page fetch belongs to the stream that asked for it. On context.Background()
+// it outlived a unit change, holding a journalctl — and over ssh a remote one —
+// for up to 30s to produce an answer that would be discarded on arrival.
+func TestPageFetchDiesWithItsStream(t *testing.T) {
+	dir := testJournal(t)
+	m := e2eModel(t, dir, logFilter{})
+	drain(t, m, 15*time.Second)
+
+	if m.journal.ctx == nil {
+		t.Fatal("the stream has no context for a fetch to hang off")
+	}
+	if err := m.journal.ctx.Err(); err != nil {
+		t.Fatalf("a live stream's context is already done: %v", err)
+	}
+
+	// Whatever loadOlder hands to fetchOlder must be cancelled by the stream
+	// going away, which is what syncJournal does on a unit or filter change.
+	streamCtx := m.journal.ctx
+	m.logFilt = logFilter{grep: "something else"}
+	m.syncJournal()
+	if streamCtx.Err() == nil {
+		t.Error("changing the filter left the old stream's context live, so its page fetch would run on")
 	}
 }

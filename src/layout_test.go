@@ -168,7 +168,9 @@ var errNotPermitted = tea.ErrProgramKilled // any non-nil error; the text is wha
 // was composed too long and got cut. These are the places where being cut looks
 // like a fault rather than a trim, so they have to fit on their own.
 func TestComposersFitWithoutTheBackstop(t *testing.T) {
-	for _, w := range []int{20, 30, 40, 60, 75, 80, 100, 200} {
+	// From minWidth up: below it the too-small notice owns the screen and the
+	// keys that would open these are inert.
+	for _, w := range []int{minWidth, 45, 60, 75, 80, 100, 200} {
 		// The filter editor: what you are typing must stay visible, and the
 		// explanation of it must give way rather than push the line over.
 		m := screenModel(w, 24)
@@ -201,5 +203,50 @@ func TestComposersFitWithoutTheBackstop(t *testing.T) {
 				break
 			}
 		}
+	}
+}
+
+// The too-small notice says q quits, so q has to quit — whatever was open when
+// the window shrank. With the filter editor up q was a character to type, and
+// with the menu up it closed the menu; neither is on screen to be closed.
+func TestTooSmallScreenAlwaysQuits(t *testing.T) {
+	for _, open := range []struct {
+		name  string
+		setup func(*model)
+	}{
+		{"nothing open", func(m *model) {}},
+		{"filter editor open", func(m *model) { m.handleKey(keyOf("/")) }},
+		{"log search open", func(m *model) { m.focus = focusLogs; m.handleKey(keyOf("/")) }},
+		{"menu open", func(m *model) { m.openMenu("nginx.service", 4, 4) }},
+		{"menu confirming", func(m *model) {
+			m.openMenu("nginx.service", 4, 4)
+			m.menu.cursor = 1
+			m.menuKey("enter")
+		}},
+		{"help open", func(m *model) { m.help = true }},
+		{"full view", func(m *model) { m.activateRow() }},
+		{"not yet connected", func(m *model) { m.connected = false }},
+	} {
+		t.Run(open.name, func(t *testing.T) {
+			// Open it at a usable size, then shrink the window under it.
+			m := screenModel(100, 30)
+			open.setup(m)
+			m.Update(tea.WindowSizeMsg{Width: 30, Height: 8})
+
+			if !strings.Contains(stripANSI(m.View()), "too small") {
+				t.Fatal("not showing the too-small notice")
+			}
+			before := m.filter + "|" + m.logFilt.grep
+			_, cmd := m.handleKey(keyOf("q"))
+			if cmd == nil {
+				t.Fatal("q did not quit")
+			}
+			if got, ok := cmd().(tea.QuitMsg); !ok {
+				t.Fatalf("q produced %T, not a quit", got)
+			}
+			if after := m.filter + "|" + m.logFilt.grep; after != before {
+				t.Errorf("q was typed into a filter instead: %q -> %q", before, after)
+			}
+		})
 	}
 }

@@ -52,6 +52,31 @@ to change.
 
 ### Fixed
 
+- **Host CPU% no longer double-counts guest time.** The kernel adds each unit
+  of guest cputime to `CPUTIME_USER` (or `CPUTIME_NICE`) *and* to
+  `CPUTIME_GUEST` (or `CPUTIME_GUEST_NICE`) — see `account_guest_time()` — so
+  summing all ten `/proc/stat` fields counted it twice. That inflated both the
+  busy time and the total, and since busy is the smaller of the two it pushed
+  the percentage up: a hypervisor spending half a second in a guest and half
+  idle reported 67%, not 50%. Only affects hosts running VMs; elsewhere the
+  fields are zero.
+- One oversized journal entry can no longer end the tail. `bufio.Scanner` stops
+  with `ErrTooLong` past its buffer and nothing checked `Err()`, so an entry
+  over 4 MiB would have ended the stream for good with "journal stream ended"
+  the only clue. Reading is now `bufio.Reader`-based: an entry past the cap is
+  dropped, with a note in its place, and the tail carries on. (A latent defect
+  rather than an observed one — journald bounds captured stdout, though a
+  native entry has no such bound and `-o json` escaping inflates it.)
+- Backwards page fetches are cancelled with the stream that asked for them.
+  They ran on `context.Background()`, so changing unit or filter left a
+  `journalctl` running — a remote one over ssh — for up to 30s, to produce an
+  answer that would be discarded on arrival.
+- `q` quits from the too-small notice even with the filter editor or the action
+  menu open underneath. The notice says q quits; with the editor up it was a
+  character to type, and with the menu up it closed a menu that is not on
+  screen.
+- The overlay tail is sliced by terminal cell rather than by rune, so a row
+  with a double-width name resumes at the column the popup actually covered.
 - **Nothing can overrun the terminal any more.** A line wider than the screen
   wraps, and a wrapped line pushes every line below it down one, so a single
   long string did not spoil itself — it spoiled the whole screen. Six places

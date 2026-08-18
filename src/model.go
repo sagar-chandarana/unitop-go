@@ -332,6 +332,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// On a terminal too small to draw, the only thing on screen is the notice
+	// saying so — and it says q quits. It has to, whatever was open when the
+	// window shrank: with the filter editor up, q was a character to type, and
+	// with the menu up it closed the menu. Neither is visible, so neither can
+	// be what the key means.
+	if m.width < minWidth || m.height < minHeight {
+		switch msg.String() {
+		case "q", "ctrl+c", "esc":
+			m.journal.stop()
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+
 	// Before the first successful poll there is nothing to navigate, sort or
 	// act on, so only quitting and retrying mean anything.
 	if !m.connected {
@@ -708,9 +722,13 @@ func (m *model) loadOlder() tea.Cmd {
 	}
 	m.loadingOlder = true
 	m.logLoadErr = ""
-	// Restart the spinner: it stops re-arming once connected.
+	// Tied to the stream, not to the program: changing unit or filter tears the
+	// stream down, and a page fetch for a unit nobody is looking at should go
+	// with it. On Background() it ran to completion — up to its 30s timeout —
+	// holding a journalctl open, and a remote one at the far end of the ssh
+	// connection, for an answer that would be thrown away on arrival.
 	return tea.Batch(
-		fetchOlder(context.Background(), m.r, m.journal.unit, oldest, m.logFilt, journalBacklog, m.logGen),
+		fetchOlder(m.journal.ctx, m.r, m.journal.unit, oldest, m.logFilt, journalBacklog, m.logGen),
 		spinnerTickCmd(),
 	)
 }

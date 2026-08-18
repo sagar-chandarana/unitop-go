@@ -151,6 +151,9 @@ type journalStream struct {
 	unit   string
 	filter logFilter // what this stream was started with
 	ch     chan journalBatch
+	// ctx is cancelled when this stream is torn down. Backwards page fetches
+	// hang off it so they die with the stream that asked for them.
+	ctx    context.Context
 	cancel context.CancelFunc
 }
 
@@ -184,7 +187,7 @@ const journalFields = "--output-fields=MESSAGE,PRIORITY,SYSLOG_IDENTIFIER,_PID"
 func startJournal(parent context.Context, r runner, unit string, f logFilter, backlog, gen int) *journalStream {
 	ctx, cancel := context.WithCancel(parent)
 	ch := make(chan journalBatch, 64)
-	js := &journalStream{gen: gen, unit: unit, filter: f, ch: ch, cancel: cancel}
+	js := &journalStream{gen: gen, unit: unit, filter: f, ch: ch, ctx: ctx, cancel: cancel}
 
 	go func() {
 		defer close(ch)
@@ -339,16 +342,19 @@ func followJournal(ctx context.Context, r runner, unit string, f logFilter,
 	lines := make(chan logLine, 512)
 	go func() {
 		defer close(lines)
-		sc := bufio.NewScanner(stdout)
-		sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-		for sc.Scan() {
-			l, ok := parseJournalJSON(sc.Bytes())
-			if !ok {
-				continue
+		br := bufio.NewReaderSize(stdout, 64*1024)
+		for {
+			raw, err := readEntryLine(br)
+			if len(raw) > 0 {
+				if l, ok := parseJournalJSON(raw); ok {
+					select {
+					case lines <- l:
+					case <-ctx.Done():
+						return
+					}
+				}
 			}
-			select {
-			case lines <- l:
-			case <-ctx.Done():
+			if err != nil {
 				return
 			}
 		}
@@ -472,4 +478,38 @@ func jsonField(raw json.RawMessage) string {
 		return strings.Join(out, " ")
 	}
 	return strings.Trim(string(raw), `"`)
+}
+
+// maxEntryBytes is the largest single journal entry we will hold. Past it the
+// entry is dropped and replaced with a note, rather than the whole tail dying.
+const maxEntryBytes = 4 << 20
+
+// readEntryLine reads one newline-terminated entry, however long it is.
+//
+// bufio.Scanner was the obvious thing and it was wrong: a line past its buffer
+// makes Scan return false with ErrTooLong, and since nothing checked Err() the
+// tail simply ended — one oversized entry and the pane stopped updating for as
+// long as you left it there, with "journal stream ended" the only clue. A
+// Reader cannot be stopped that way: an entry over the cap is discarded to the
+// end of its line and reading continues with the next one.
+func readEntryLine(br *bufio.Reader) ([]byte, error) {
+	var buf []byte
+	over := false
+	for {
+		chunk, more, err := br.ReadLine()
+		if len(chunk) > 0 && !over {
+			if len(buf)+len(chunk) > maxEntryBytes {
+				over, buf = true, nil
+			} else {
+				buf = append(buf, chunk...)
+			}
+		}
+		if more && err == nil {
+			continue // the line goes on past the buffer
+		}
+		if over {
+			return []byte(`{"MESSAGE":"⟨unitop⟩ dropped a journal entry larger than 4 MiB"}`), err
+		}
+		return buf, err
+	}
 }

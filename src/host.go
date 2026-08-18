@@ -76,7 +76,16 @@ func (c *Collector) deriveHost(files map[string]string, now time.Time) HostStats
 			continue
 		}
 		if f[0] == "cpu" && len(f) >= 5 {
+			// The fields are user nice system idle iowait irq softirq steal
+			// guest guest_nice. guest is *already counted inside* user, and
+			// guest_nice inside nice — the kernel adds them twice on purpose,
+			// so summing all ten counts guest time twice. On a hypervisor that
+			// is not a rounding error: it inflates both the busy time and the
+			// total, and pushes the reported CPU% above the truth.
 			for i, v := range f[1:] {
+				if i >= 8 { // guest, guest_nice
+					continue
+				}
 				n, _ := strconv.ParseUint(v, 10, 64)
 				cur.cpuTotal += n
 				if i == 3 || i == 4 { // idle + iowait

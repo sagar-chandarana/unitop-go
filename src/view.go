@@ -1279,7 +1279,10 @@ func sliceANSI(s string, from int) string {
 		if visible >= from {
 			out.WriteRune(r)
 		}
-		visible++
+		// Cells, not runes. Counting runes put the cut in the wrong place on any
+		// row with a double-width name — the overlay is positioned in cells, so
+		// the tail resumed from a column that was not the one it covered.
+		visible += ansi.StringWidth(string(r))
 	}
 	if strings.TrimSpace(stripSGR(out.String())) == "" {
 		return "" // nothing but padding out there
