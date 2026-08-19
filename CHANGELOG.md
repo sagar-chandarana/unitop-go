@@ -30,6 +30,14 @@ to change.
   2048 lines above the cap between trims — so the old number was usually wrong
   and jittered from frame to frame.
 
+### Changed
+
+- **The entries on screen are word-wrapped once per frame, not twice.** The
+  0.3.1 split of measuring from rendering left the renderer re-wrapping what
+  it had just measured; styling now reuses the measured segments — a constant
+  ~460 allocations and ~18 KB per frame back, no change to any frame's
+  content.
+
 ## [0.3.2] — 2026-08-19
 
 A readability release: unitop no longer leans on colours that some themes are

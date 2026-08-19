@@ -1133,12 +1133,12 @@ func (m model) renderLogWindow(width, height int) []string {
 	for {
 		rest := skip
 		for i := len(m.logs) - 1; i >= 0 && len(win) < height; i-- {
-			_, segs := m.logSegments(m.logs[i], width)
+			prefix, segs := m.logSegments(m.logs[i], width)
 			if rest >= len(segs) {
 				rest -= len(segs) // this entry is entirely below the window
 				continue
 			}
-			lines := m.formatLog(m.logs[i], width)
+			lines := m.formatSegs(m.logs[i], prefix, segs)
 			if rest > 0 { // it straddles the bottom edge
 				lines = lines[:len(lines)-rest]
 				rest = 0
@@ -1285,7 +1285,12 @@ func (m model) logSegments(l logLine, width int) (prefix string, segs []string) 
 // formatLog renders one journal entry into the wrapped display lines it needs.
 func (m model) formatLog(l logLine, width int) []string {
 	prefix, segs := m.logSegments(l, width)
+	return m.formatSegs(l, prefix, segs)
+}
 
+// formatSegs styles display lines that logSegments already produced, so a
+// caller that measured an entry does not pay to wrap it twice.
+func (m model) formatSegs(l logLine, prefix string, segs []string) []string {
 	style := prioStyle(l.prio)
 	if l.prio <= 3 {
 		style = style.Bold(true)

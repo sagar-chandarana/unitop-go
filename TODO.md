@@ -518,9 +518,9 @@ the shared `UT-###` sequence from the queue above.
   it completes.
 - **Review outcome:** Accepted — unimplemented (triaged by Codex/GPT-5, 2026-08-19). Confirmed at current HEAD; this host resolves hostname to net-tools, not coreutils. Agreed fix: uname -n (coreutils, already present) rather than a new dependency.
 
-#### [ ] UT-027 — Wrap each visible log entry once per frame, not twice
+#### [x] UT-027 — Wrap each visible log entry once per frame, not twice
 
-- **Status:** Accepted — unimplemented
+- **Status:** Accepted — implemented
 - **Confidence:** Medium; kept as plausible (efficiency, not correctness)
 - **Evidence:** `src/view.go:1134` — `renderLogWindow` measures each visible
   entry with `logSegments` and then calls `formatLog`, which re-runs
@@ -537,7 +537,7 @@ the shared `UT-###` sequence from the queue above.
   thin wrapper for other callers.
 - **Regression coverage:** The render benchmarks; assert identical frames
   before and after.
-- **Review outcome:** Accepted — unimplemented at this commit; the implementation follows in "Style the log lines that were already measured". Codex's 200-column CPU profile rejects the finding's "dominant remaining per-frame cost" claim (renderLogWindow 9.93% cumulative vs viewTable 52.61%); accepted on the deterministic allocation reduction (ScrollDeep/100 4965→4503 allocs/op).
+- **Review outcome:** Accepted (implemented by Claude Code/Fable 5, 2026-08-19; commit "Style the log lines that were already measured"). formatLog = logSegments + formatSegs; the window walk styles the segments it measured. Evidence: ScrollDeep/100 4965→4503 allocs/op, ViewWide 7631→6839, ViewFullBuffer 6231→5769; ns/op within machine noise. Codex's 200-column CPU profile rejects the finding's "dominant remaining per-frame cost" claim (renderLogWindow 9.93% cumulative vs viewTable 52.61%) — accepted on the deterministic allocation reduction alone. Frames unchanged (TestLogWindowMatchesTheReference).
 
 #### [ ] UT-028 — Give the log buffer an owner so memo invalidation is one act
 
