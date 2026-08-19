@@ -43,6 +43,44 @@
           program = "${self.packages.${pkgs.system}.unitop}/bin/unitop";
         };
         default = unitop;
+
+        # Regenerate the four images in docs/ from the current build. Run from
+        # the repo root — it writes there:
+        #
+        #   nix run .#screenshots
+        #
+        # The journal is invented (docs/helpers/fake-journalctl.sh) so this
+        # works anywhere, including where the host's own journal is unreadable;
+        # the unit table and host stats are the real machine's. The hostname is
+        # replaced with server1.local on the way out.
+        screenshots = {
+          type = "app";
+          program = "${pkgs.writeShellApplication {
+            name = "unitop-screenshots";
+            runtimeInputs = with pkgs; [
+              tmux perl gawk gnused coreutils termshot pngquant systemd procps
+            ];
+            text = ''
+              if [ ! -x docs/helpers/screenshot.sh ]; then
+                echo "run this from the repo root: docs/helpers/screenshot.sh is not here" >&2
+                exit 1
+              fi
+              export UNITOP=${self.packages.${pkgs.system}.unitop}/bin/unitop
+              export REAL_JOURNALCTL=${pkgs.systemd}/bin/journalctl
+              export JOURNAL_REMOTE=${pkgs.systemd}/lib/systemd/systemd-journal-remote
+              export FAKE_JOURNAL=1
+
+              D="Down Down Down Down Down"
+              # shellcheck disable=SC2086
+              {
+                docs/helpers/screenshot.sh docs/main.png 132 30 -s name -f systemd- -- $D
+                docs/helpers/screenshot.sh docs/full.png 132 30 -s name -f systemd- -- $D Enter
+                docs/helpers/screenshot.sh docs/tree.png 132 30 -t -s cpu -- Down Down Down
+                docs/helpers/screenshot.sh docs/menu.png 132 30 -s name -f systemd- -- $D x Down
+              }
+            '';
+          }}/bin/unitop-screenshots";
+        };
       });
 
       devShells = forAllSystems (pkgs: {

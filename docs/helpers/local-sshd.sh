@@ -4,9 +4,9 @@
 # of the program, and reasoning about ssh's argument handling is no substitute
 # for watching it.
 #
-#   docs/local-sshd.sh start          # then: eval "$(docs/local-sshd.sh env)"
+#   docs/helpers/local-sshd.sh start          # then: eval "$(docs/helpers/local-sshd.sh env)"
 #   unitop -H "$USER@127.0.0.1"       # runs over real ssh, against this host
-#   docs/local-sshd.sh stop
+#   docs/helpers/local-sshd.sh stop
 #
 # It runs as you, on a high port, with its own host key and authorized_keys, and
 # touches nothing in ~/.ssh. The wrapper it puts on PATH injects the port and

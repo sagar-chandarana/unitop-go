@@ -5,7 +5,7 @@ type: feedback
 ---
 
 The remote path used to get read rather than run, because testing it looked
-like it needed another host. It does not: `docs/local-sshd.sh start` puts a
+like it needed another host. It does not: `docs/helpers/local-sshd.sh start` puts a
 throwaway sshd on 127.0.0.1:2222 with its own host key, and a wrapper on `PATH`
 that adds only the connection details — so **unitop's real argument list is
 what ssh receives**.
@@ -25,7 +25,7 @@ before the rig was right.
 
 **How to apply:** before changing anything in `runner.command`, `sshOpts` or
 the poll one-liner, bring the rig up and watch the invocation log
-(`docs/local-sshd.sh log`). Claims about ssh's argument handling are cheap to
+(`docs/helpers/local-sshd.sh log`). Claims about ssh's argument handling are cheap to
 test now and expensive to get wrong — quoting a journal cursor containing `;`,
 or a `-g` pattern containing a space, both go through this path.
 

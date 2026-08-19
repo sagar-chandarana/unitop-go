@@ -40,9 +40,10 @@ the raw capture.
 
 ## Regenerating the README screenshots
 
-`docs/screenshot.sh` now does the whole job — tmux capture, hostname
-sanitising, padding, termshot, pngquant — and carries the four commands that
-produce the images in `docs/`. Use it rather than rebuilding the pipeline.
+`nix run .#screenshots` does the whole job — tmux capture, hostname sanitising,
+padding, termshot, pngquant, all four images — and brings its own tools. It
+needs no readable journal: `docs/helpers/fake-journalctl.sh` invents one that
+suits whichever unit is selected. Use it rather than rebuilding the pipeline.
 
 Traps it exists to encode:
 

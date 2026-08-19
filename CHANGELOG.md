@@ -8,6 +8,14 @@ to change.
 
 ## [Unreleased]
 
+### Changed
+
+- The readme screenshots show 0.3.0 — the boxed panes, the filter in the pane
+  title, the pane-scoped footer. `nix run .#screenshots` regenerates all four
+  from the current build, on any machine: the unit table and host stats are the
+  real ones, the journal is invented so it works where the real one cannot be
+  read, and the hostname is replaced on the way out.
+
 ## [0.3.0] — 2026-08-18
 
 The log pane was reading the journal wrongly, and a service could scribble on
