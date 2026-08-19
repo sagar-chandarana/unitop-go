@@ -262,7 +262,7 @@ func (m model) viewTooSmall() []string {
 		}
 	}
 	add(stBad.Render("terminal too small"), stBad.Render("too small"), stBad.Render("small"))
-	add(stSubtle.Render(size+", unitop needs "+need), stSubtle.Render(size+" < "+need), stSubtle.Render(need))
+	add(stFaint.Render(size+", unitop needs "+need), stFaint.Render(size+" < "+need), stFaint.Render(need))
 	add("", " ")
 	add(stFaint.Render("resize the window, or q to quit"), stFaint.Render("resize, or q"), stKey.Render("q"))
 
@@ -301,7 +301,7 @@ func (m model) viewStartup() []string {
 		// The spinner and its two spaces are three cells the host name cannot
 		// have; a long one is otherwise exactly what pushes this off the edge.
 		body = append(body,
-			lipgloss.NewStyle().Foreground(colMagenta).Render(frame)+"  "+
+			stBase.Render(frame)+"  "+
 				stBase.Render(truncRunes(what+"…", max(6, m.width-3))),
 			"",
 			stFaint.Render("q  quit"),
@@ -337,7 +337,7 @@ func (m model) viewStartup() []string {
 		for _, s := range troubleshoot(m.err, m.r.host) {
 			for i, l := range wrapWords(s, max(8, wrap-4)) {
 				if i == 0 {
-					body = append(body, stSubtle.Render("  • ")+stBase.Render(l))
+					body = append(body, stFaint.Render("  • ")+stBase.Render(l))
 					continue
 				}
 				body = append(body, stBase.Render("    "+l))
@@ -505,31 +505,31 @@ func (m model) viewHost() []string {
 	ident := []string{name}
 	if h.OK {
 		if h.NCPU > 0 {
-			ident = append(ident, stSubtle.Render(fmt.Sprintf("%d cpu", h.NCPU)))
+			ident = append(ident, stFaint.Render(fmt.Sprintf("%d cpu", h.NCPU)))
 		}
 		if h.Uptime > 0 {
-			ident = append(ident, stSubtle.Render("up "+humanDur(h.Uptime)))
+			ident = append(ident, stFaint.Render("up "+humanDur(h.Uptime)))
 		}
-		ident = append(ident, stSubtle.Render("load ")+
-			lipgloss.NewStyle().Foreground(heat(h.LoadPct(), 20, 70, 100, 150)).
+		ident = append(ident, stFaint.Render("load ")+
+			heat(h.LoadPct(), 20, 70, 100, 150).
 				Render(fmt.Sprintf("%.2f %.2f %.2f", h.Load[0], h.Load[1], h.Load[2])))
 	}
 
 	usage := []string{
-		stSubtle.Render("cpu ") + lipgloss.NewStyle().Foreground(heat(h.CPUPct, 5, 40, 70, 90)).
+		stFaint.Render("cpu ") + heat(h.CPUPct, 5, 40, 70, 90).
 			Render(fmt.Sprintf("%.0f%%", h.CPUPct)),
-		stSubtle.Render("mem ") + lipgloss.NewStyle().Foreground(heat(h.MemPct(), 25, 60, 80, 92)).
+		stFaint.Render("mem ") + heat(h.MemPct(), 25, 60, 80, 92).
 			Render(humanBytes(h.MemUsed)) + stFaint.Render("/"+humanBytes(h.MemTotal)),
 	}
 	if h.SwapTotal > 0 && h.SwapUsed > 0 {
-		usage = append(usage, stSubtle.Render("swap ")+
-			lipgloss.NewStyle().Foreground(heat(h.SwapPct(), 1, 20, 50, 80)).Render(humanBytes(h.SwapUsed)))
+		usage = append(usage, stFaint.Render("swap ")+
+			heat(h.SwapPct(), 1, 20, 50, 80).Render(humanBytes(h.SwapUsed)))
 	}
-	usage = append(usage, stSubtle.Render("net ")+
+	usage = append(usage, stFaint.Render("net ")+
 		lipgloss.NewStyle().Foreground(colCyan).Render("↓"+humanRateFull(h.NetIn)+" ↑"+humanRateFull(h.NetOut)))
 
 	units := fmt.Sprintf("%s%s%s units",
-		stGood.Render(fmt.Sprint(active)), stFaint.Render("/"), stSubtle.Render(fmt.Sprint(len(m.units))))
+		stGood.Render(fmt.Sprint(active)), stFaint.Render("/"), stFaint.Render(fmt.Sprint(len(m.units))))
 	if failed > 0 {
 		units += sep + stBad.Render(fmt.Sprintf("%d failed", failed))
 	}
@@ -538,7 +538,7 @@ func (m model) viewHost() []string {
 	if m.reverse {
 		arrow = "↑"
 	}
-	mode := []string{stSubtle.Render("sort ") + stHeader.Render(m.sortBy.String()+arrow)}
+	mode := []string{stFaint.Render("sort ") + stHeader.Render(m.sortBy.String()+arrow)}
 	if m.tree {
 		mode = append(mode, stAccent.Render("tree"))
 	}
@@ -557,7 +557,7 @@ func (m model) viewHost() []string {
 	case m.paused:
 		mode = append(mode, stWarn.Render("PAUSED"))
 	default:
-		mode = append(mode, stSubtle.Render(fmt.Sprintf("%gs", m.interval.Seconds())))
+		mode = append(mode, stFaint.Render(fmt.Sprintf("%gs", m.interval.Seconds())))
 	}
 
 	rule := stBorder.Render(strings.Repeat("━", m.width))
@@ -614,7 +614,7 @@ func framed(body []string, w, h int, title string, focused bool) []string {
 	st := stBorder
 	if focused {
 		tl, tr, bl, br, hz, edge = "┏", "┓", "┗", "┛", "━", "┃"
-		st = lipgloss.NewStyle().Foreground(colMagenta)
+		st = stBase
 	}
 
 	head, used := st.Render(tl+hz), 2
@@ -650,7 +650,7 @@ func (m model) tableTitle(width int) string {
 	}
 	head := stColHead.Render("units ") + stBase.Render(strconv.Itoa(shown))
 	if shown != len(m.units) {
-		head += stSubtle.Render(" of " + strconv.Itoa(len(m.units)))
+		head += stFaint.Render(" of " + strconv.Itoa(len(m.units)))
 	}
 	if m.filter == "" {
 		return head
@@ -745,7 +745,7 @@ func (m model) viewTable(width, height int) []string {
 		if m.err != "" {
 			msg = "no data"
 		}
-		return append(out, stSubtle.Render(msg))
+		return append(out, stFaint.Render(msg))
 	}
 
 	end := min(m.topRow+height-2, len(m.rows))
@@ -819,17 +819,17 @@ func cellFor(r row, c colDef, idx int) (string, lipgloss.Style) {
 			if !r.expanded {
 				twisty = "▸ "
 			}
-			st := lipgloss.NewStyle().Foreground(colMagenta).Bold(true)
+			st := stHeader
 			if r.nFailed > 0 {
 				st = st.Foreground(colRed)
 			}
 			return indent + twisty + sliceLabel(r.slice), st
 		}
-		st := lipgloss.NewStyle().Foreground(colDefault)
+		st := stBase
 		if u.Failed() {
 			st = st.Foreground(colRed).Bold(true)
 		} else if u.Active == "inactive" {
-			st = st.Foreground(colGrey)
+			st = stFaint
 		}
 		return indent + shortUnit(u.Name), st
 	}
@@ -838,25 +838,25 @@ func cellFor(r row, c colDef, idx int) (string, lipgloss.Style) {
 		if r.nFailed > 0 {
 			return fmt.Sprintf("%d fail", r.nFailed), lipgloss.NewStyle().Foreground(colRed).Bold(true)
 		}
-		return fmt.Sprintf("%d unit", r.nUnits), stSubtle
+		return fmt.Sprintf("%d unit", r.nUnits), stFaint
 	}
 
 	switch c.title {
 	case "STATE":
-		return u.StateLabel(), lipgloss.NewStyle().Foreground(stateColor(u))
+		return u.StateLabel(), stateStyle(u)
 
 	case "CPU%":
 		if u.CPUNSec == unsetU64 || !u.HasRates {
 			return "-", stFaint
 		}
-		return fmt.Sprintf("%.1f", u.CPUPct), lipgloss.NewStyle().Foreground(heat(u.CPUPct, 1, 20, 60, 150))
+		return fmt.Sprintf("%.1f", u.CPUPct), heat(u.CPUPct, 1, 20, 60, 150)
 
 	case "MEM":
 		if u.MemCurrent == unsetU64 {
 			return "-", stFaint
 		}
 		mb := float64(u.MemCurrent) / (1024 * 1024)
-		return humanBytes(u.MemCurrent), lipgloss.NewStyle().Foreground(heat(mb, 16, 128, 512, 2048))
+		return humanBytes(u.MemCurrent), heat(mb, 16, 128, 512, 2048)
 
 	case "NET↓", "NET↑":
 		if !u.IPAccount {
@@ -869,7 +869,7 @@ func cellFor(r row, c colDef, idx int) (string, lipgloss.Style) {
 		if !u.HasRates {
 			return "·", stFaint
 		}
-		return humanRate(v), lipgloss.NewStyle().Foreground(heat(v, 1024, 64*1024, 1024*1024, 16*1024*1024))
+		return humanRate(v), heat(v, 1024, 64*1024, 1024*1024, 16*1024*1024)
 
 	case "IO↓", "IO↑":
 		v, raw := u.IORRate, u.IORead
@@ -882,7 +882,7 @@ func cellFor(r row, c colDef, idx int) (string, lipgloss.Style) {
 		if !u.HasRates {
 			return "·", stFaint
 		}
-		return humanRate(v), lipgloss.NewStyle().Foreground(heat(v, 1024, 256*1024, 4*1024*1024, 64*1024*1024))
+		return humanRate(v), heat(v, 1024, 256*1024, 4*1024*1024, 64*1024*1024)
 
 	case "RST":
 		if u.NRestarts == unsetU64 {
@@ -902,7 +902,7 @@ func cellFor(r row, c colDef, idx int) (string, lipgloss.Style) {
 			return "-", stFaint
 		}
 		d := time.Since(u.ActiveSince)
-		st := stSubtle
+		st := stFaint
 		if d < 2*time.Minute {
 			st = lipgloss.NewStyle().Foreground(colYellow)
 		}
@@ -912,7 +912,7 @@ func cellFor(r row, c colDef, idx int) (string, lipgloss.Style) {
 		if u.Tasks == unsetU64 {
 			return "-", stFaint
 		}
-		return humanCount(u.Tasks), stSubtle
+		return humanCount(u.Tasks), stFaint
 	}
 	return "", stBase
 }
@@ -929,7 +929,7 @@ func (m model) viewLogPane(width, height int) []string {
 		if haveRow && r.kind == rowSlice {
 			head = sliceLabel(r.slice) + " — a slice has no journal of its own"
 		}
-		out = append(out, stSubtle.Render(truncRunes(head, width)))
+		out = append(out, stFaint.Render(truncRunes(head, width)))
 		for len(out) < m.detailHeight()-1 {
 			out = append(out, "")
 		}
@@ -949,14 +949,14 @@ func (m model) viewLogPane(width, height int) []string {
 // pane can simply take the first few lines. The full view has room for all of
 // it; the side pane takes what fits beside the table.
 func (m model) unitDetail(u Unit, width int) []string {
-	title := lipgloss.NewStyle().Foreground(stateColor(u)).Bold(true).
+	title := stateStyle(u).Bold(true).
 		Render(truncRunes(shortUnit(u.Name), max(1, width/2)))
 	title += "  " + stateText(u)
 
 	// Wide enough, the lifecycle facts sit opposite the name; in a narrow pane
 	// hjoin would drop them entirely, so they get a line of their own.
-	stats := stSubtle.Render(strings.Join(m.unitStats(u), " · "))
-	lines := []string{truncANSI(title, width), stSubtle.Render(truncRunes(u.Desc, width))}
+	stats := stFaint.Render(strings.Join(m.unitStats(u), " · "))
+	lines := []string{truncANSI(title, width), stFaint.Render(truncRunes(u.Desc, width))}
 	if width >= 90 {
 		lines[0] = hjoin(width, title, stats)
 	} else {
@@ -968,23 +968,23 @@ func (m model) unitDetail(u Unit, width int) []string {
 	// and does it start at boot".
 	var cfg []string
 	if u.Type != "" {
-		cfg = append(cfg, stSubtle.Render("type ")+stBase.Render(u.Type))
+		cfg = append(cfg, stFaint.Render("type ")+stBase.Render(u.Type))
 	}
 	if u.FileState != "" {
 		cfg = append(cfg, fileStateStyle(u.FileState).Render(u.FileState))
 	}
 	if u.RestartPol != "" && u.RestartPol != "no" {
-		cfg = append(cfg, stSubtle.Render("restart ")+stBase.Render(u.RestartPol))
+		cfg = append(cfg, stFaint.Render("restart ")+stBase.Render(u.RestartPol))
 	}
 	if u.User != "" {
-		cfg = append(cfg, stSubtle.Render("user ")+stBase.Render(u.User))
+		cfg = append(cfg, stFaint.Render("user ")+stBase.Render(u.User))
 	}
 	if u.Slice != "" && u.Slice != "system.slice" {
-		cfg = append(cfg, stSubtle.Render("slice ")+stBase.Render(sliceLabel(u.Slice)))
+		cfg = append(cfg, stFaint.Render("slice ")+stBase.Render(sliceLabel(u.Slice)))
 	}
 	if u.TriggeredBy != "" {
 		by := strings.Fields(u.TriggeredBy)
-		cfg = append(cfg, stSubtle.Render("triggered by ")+stBase.Render(shortUnit(by[0])))
+		cfg = append(cfg, stFaint.Render("triggered by ")+stBase.Render(shortUnit(by[0])))
 	}
 	if len(cfg) > 0 {
 		lines = append(lines, truncANSI(strings.Join(cfg, stFaint.Render(" · ")), width))
@@ -992,11 +992,11 @@ func (m model) unitDetail(u Unit, width int) []string {
 
 	// What it actually runs, and what it says about itself.
 	if u.StatusText != "" {
-		lines = append(lines, truncANSI(stSubtle.Render("status ")+
+		lines = append(lines, truncANSI(stFaint.Render("status ")+
 			lipgloss.NewStyle().Foreground(colCyan).Render(u.StatusText), width))
 	}
 	if u.ExecStart != "" {
-		lines = append(lines, truncANSI(stSubtle.Render("exec ")+stFaint.Render(u.ExecStart), width))
+		lines = append(lines, truncANSI(stFaint.Render("exec ")+stFaint.Render(u.ExecStart), width))
 	}
 	if u.Fragment != "" {
 		lines = append(lines, truncANSI(stFaint.Render(u.Fragment), width))
@@ -1015,7 +1015,7 @@ func fileStateStyle(s string) lipgloss.Style {
 	case "enabled", "enabled-runtime":
 		return lipgloss.NewStyle().Foreground(colGreen)
 	}
-	return stSubtle
+	return stFaint
 }
 
 // stateText names the state and keeps systemd's own wording alongside when the
@@ -1023,7 +1023,7 @@ func fileStateStyle(s string) lipgloss.Style {
 // what systemctl would tell you.
 func stateText(u Unit) string {
 	label := u.StateLabel()
-	s := lipgloss.NewStyle().Foreground(stateColor(u)).Render(label)
+	s := stateStyle(u).Render(label)
 	if label == u.Sub {
 		return s
 	}
@@ -1037,8 +1037,8 @@ func stateText(u Unit) string {
 // unitLive is the current CPU/memory/network/disk of one unit, coloured on the
 // same scales as the table columns.
 func (m model) unitLive(u Unit) string {
-	field := func(label, value string, c lipgloss.TerminalColor) string {
-		return stSubtle.Render(label+" ") + lipgloss.NewStyle().Foreground(c).Render(value)
+	field := func(label, value string, st lipgloss.Style) string {
+		return stFaint.Render(label+" ") + st.Render(value)
 	}
 
 	cpu, mem := "-", "-"
@@ -1061,13 +1061,13 @@ func (m model) unitLive(u Unit) string {
 	}
 	if u.IPAccount {
 		parts = append(parts, field("net",
-			"↓"+humanRateFull(u.NetInRate)+" ↑"+humanRateFull(u.NetOutRate), colCyan))
+			"↓"+humanRateFull(u.NetInRate)+" ↑"+humanRateFull(u.NetOutRate), stAccent))
 	} else {
-		parts = append(parts, stSubtle.Render("net ")+stFaint.Render("off"))
+		parts = append(parts, stFaint.Render("net ")+stFaint.Render("off"))
 	}
 	if u.IORead != unsetU64 {
 		parts = append(parts, field("io",
-			"↓"+humanRateFull(u.IORRate)+" ↑"+humanRateFull(u.IOWRate), colBlue))
+			"↓"+humanRateFull(u.IORRate)+" ↑"+humanRateFull(u.IOWRate), stKey))
 	}
 	return strings.Join(parts, stFaint.Render(" · "))
 }
@@ -1172,14 +1172,14 @@ func (m model) renderLogWindow(width, height int) []string {
 func (m model) emptyLogNotice() []string {
 	switch {
 	case m.journal == nil:
-		return []string{stSubtle.Render("no journal for this row")}
+		return []string{stFaint.Render("no journal for this row")}
 
 	case m.logStarting():
 		// Only for the moment before the first entries land, so a slow remote
 		// does not flash "nothing matches" and then fill in.
 		frame := string(spinnerFrames[m.spinner%len(spinnerFrames)])
-		return []string{lipgloss.NewStyle().Foreground(colMagenta).Render(frame) +
-			stSubtle.Render(" reading the journal…")}
+		return []string{stBase.Render(frame) +
+			stFaint.Render(" reading the journal…")}
 
 	case !m.logFilt.empty():
 		return []string{
@@ -1188,7 +1188,7 @@ func (m model) emptyLogNotice() []string {
 			stFaint.Render("esc clears it · e changes the level · / searches for something else"),
 		}
 	}
-	return []string{stSubtle.Render("this unit has written nothing to the journal")}
+	return []string{stFaint.Render("this unit has written nothing to the journal")}
 }
 
 // logStarting is true while the backlog is still being read. The stream says
@@ -1204,7 +1204,7 @@ func (m model) logTopMarker(width int) string {
 	switch {
 	case m.loadingOlder:
 		frame := string(spinnerFrames[m.spinner%len(spinnerFrames)])
-		return lipgloss.NewStyle().Foreground(colMagenta).Render(frame) +
+		return stBase.Render(frame) +
 			stWarn.Render(" loading earlier entries…")
 	case m.logLoadErr != "":
 		return stBad.Render("── could not load earlier entries: ") +
@@ -1215,7 +1215,7 @@ func (m model) logTopMarker(width int) string {
 		return stWarn.Render(fmt.Sprintf(
 			"── %d lines held, the most unitop keeps; use journalctl for more ──", len(m.logs)))
 	default:
-		return stSubtle.Render("── earlier entries exist; keep scrolling to load ──")
+		return stFaint.Render("── earlier entries exist; keep scrolling to load ──")
 	}
 }
 
@@ -1260,7 +1260,7 @@ func (m model) logSegments(l logLine, width int) (prefix string, segs []string) 
 func (m model) formatLog(l logLine, width int) []string {
 	prefix, segs := m.logSegments(l, width)
 
-	style := lipgloss.NewStyle().Foreground(prioColor(l.prio))
+	style := prioStyle(l.prio)
 	if l.prio <= 3 {
 		style = style.Bold(true)
 	}
@@ -1373,7 +1373,7 @@ func (m model) menuBox() []string {
 	// Never wider than the terminal: a box cut off at the right edge reads as a
 	// broken frame rather than a popup.
 	w := m.menuBoxWidth()
-	border := lipgloss.NewStyle().Foreground(colMagenta)
+	border := stBase
 	out := []string{border.Render("╭") + stHeader.Render(pad(" "+truncRunes(shortUnit(m.menu.unit), w-3)+" ", w-2)) + border.Render("╮")}
 	for i, a := range unitActions {
 		label := pad(" "+a.label, w-2)
@@ -1398,7 +1398,7 @@ func (m model) confirmBox() []string {
 	return []string{
 		border.Render("╭" + strings.Repeat("─", w-2) + "╮"),
 		border.Render("│") + stBad.Render(pad(text, w-2)) + border.Render("│"),
-		border.Render("│") + stSubtle.Render(pad(hint, w-2)) + border.Render("│"),
+		border.Render("│") + stFaint.Render(pad(hint, w-2)) + border.Render("│"),
 		border.Render("╰" + strings.Repeat("─", w-2) + "╯"),
 	}
 }
@@ -1463,7 +1463,7 @@ func (m model) viewFooter() string {
 		if m.filterLogs {
 			long, short, text = "show journal lines matching", "search log:", m.logFilt.grep
 		}
-		caret := lipgloss.NewStyle().Foreground(colMagenta).Render("▏")
+		caret := stBase.Render("▏")
 		typed := stFilter.Render(text)
 		for _, v := range []struct {
 			label string
@@ -1471,7 +1471,7 @@ func (m model) viewFooter() string {
 		}{{long, true}, {short, true}, {short, false}, {"", false}} {
 			line := typed + caret
 			if v.label != "" {
-				line = stSubtle.Render(v.label+" ") + line
+				line = stFaint.Render(v.label+" ") + line
 			}
 			if v.hint {
 				line += stFaint.Render("  enter apply · esc clear")
@@ -1601,7 +1601,7 @@ func (m model) helpLines() []string {
 		"Unit actions need privilege: run as root, or pass -sudo for sudo -n.",
 	} {
 		for _, l := range wrapWords(n, max(8, m.width-4)) {
-			notes = append(notes, stSubtle.Render("  "+l))
+			notes = append(notes, stFaint.Render("  "+l))
 		}
 	}
 

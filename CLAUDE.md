@@ -199,12 +199,24 @@ These are decisions, not accidents. Change them deliberately, not incidentally.
   Naming a colour by index means it is whatever the user's theme says, so
   unitop matches the rest of their terminal and needs no light/dark handling.
   Never write a hex value or a 256-colour index: it would override the theme
-  and force the light/dark problem back in. Six hues carry meaning — green
-  healthy, yellow watch, red wrong, cyan finished-or-rate, blue keys, magenta
-  headings — everything else is grey or dim. Magnitudes ramp through five
-  steps via `heat()` — grey, green, yellow, orange, red — where orange is
-  bright yellow, the one step that has no hue of its own. State comes from
-  `stateColor()`. Tests assert both stay inside the palette.
+  and force the light/dark problem back in.
+- **Colour is only ever semantic; structure is carried by weight.** Five hues
+  mean something — green healthy, yellow watch, red wrong, cyan
+  finished-or-rate, blue keys — and everything else is the terminal's own
+  foreground, bold for emphasis and faint for anything below notice.
+  Headings, the sorted column, the focused frame and the filter used magenta,
+  yellow and colour 8; all three are unreadable on some real theme (magenta
+  1.65:1 and yellow 1.73:1 on a light one, colour 8 1.71:1 on a dark one),
+  and the theme is entitled to that — an index is a name, not a promise about
+  contrast. Only the foreground the user already reads everything else in is
+  safe everywhere. The measurements are in the `theme.go` header; a terminal
+  that ignores SGR 2 loses the hierarchy but keeps every word legible, which
+  is the right way round to fail.
+- Magnitudes ramp through five steps via `heat()` — dim, green, yellow,
+  orange, red — where orange is bright yellow, the one step that has no hue
+  of its own. State comes from `stateStyle()`. Both return a **style**, not a
+  colour, so the quiet step can be dimmed rather than coloured; tests assert
+  they stay inside the palette.
 
 **Talking to systemd**
 
@@ -294,6 +306,14 @@ way out — keep it that way. `docs/helpers/screenshot.sh` is the single-image
 worker underneath, if you want a different frame; further pitfalls are in
 `.claude/memory/feedback_verify_tui_with_pty.md`. (`charm-freeze`, used
 earlier, does not render ANSI backgrounds at all; `termshot` does.)
+
+The images are rendered in a real terminal theme, not the renderer's own
+palette: `docs/helpers/palette.awk` rewrites the captured screen's sixteen
+colours into truecolor, resolves faint into an explicit dimmed foreground
+(termshot ignores SGR 2, so every dimmed label came out at full strength) and
+repaints the gaps termshot leaves between lines. `THEME=latte nix run
+.#screenshots` renders the light one instead — worth doing before touching the
+palette, because a colour that fails does so on one side only.
 
 ## Gotchas
 

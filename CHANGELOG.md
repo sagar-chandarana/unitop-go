@@ -8,6 +8,26 @@ to change.
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-08-19
+
+A readability release: unitop no longer leans on colours that some themes are
+entitled to render unreadably.
+
+### Changed
+
+- **Headings, the sorted column, the focused pane frame and the filter no
+  longer use a colour.** They were magenta and yellow; they are now the
+  terminal's own foreground, bold. Rules, timestamps, labels and idle values
+  are that same foreground dimmed, rather than colour 8. Colour is left to
+  carry meaning only — green healthy, yellow watch, red wrong, cyan finished,
+  blue keys.
+- On a dark theme that treats colour 8 as a background shade, every timestamp
+  and idle number had been a smudge at 1.71:1; on a light theme whose palette
+  was drawn for a dark one, headings sat at 1.65:1. An ANSI index is a name,
+  not a promise about contrast, so nothing that must be read depends on one.
+- The screenshots in `docs/` are rendered in a real terminal theme now.
+  `THEME=latte nix run .#screenshots` renders a light one.
+
 ## [0.3.1] — 2026-08-19
 
 A performance release. Watching a service that logs steadily could take a whole
@@ -326,7 +346,8 @@ First release.
 - Static `linux/amd64` and `linux/arm64` binaries, a flake with an overlay, and
   nothing to configure.
 
-[Unreleased]: https://github.com/sagar-chandarana/unitop-go/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/sagar-chandarana/unitop-go/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/sagar-chandarana/unitop-go/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/sagar-chandarana/unitop-go/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/sagar-chandarana/unitop-go/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/sagar-chandarana/unitop-go/compare/v0.1.3...v0.2.0

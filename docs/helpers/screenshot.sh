@@ -20,6 +20,7 @@
 set -euo pipefail
 
 UNITOP=${UNITOP:-./unitop}
+HELPERS=$(cd "$(dirname "$0")" && pwd)
 TMP=${TMPDIR:-/tmp}/unitop-shot
 mkdir -p "$TMP"
 
@@ -32,7 +33,7 @@ KEYS=("$@")
 # An invented journal, for taking these where the real one cannot be read.
 if [ -n "${FAKE_JOURNAL:-}" ]; then
 	mkdir -p "$TMP/bin"
-	ln -sf "$(cd "$(dirname "$0")" && pwd)/fake-journalctl.sh" "$TMP/bin/journalctl"
+	ln -sf "$HELPERS/fake-journalctl.sh" "$TMP/bin/journalctl"
 	PATH="$TMP/bin:$PATH"
 	export PATH
 fi
@@ -83,11 +84,27 @@ awk -v w="$COLS" '{ v = $0; gsub(/\033\[[0-9;]*m/, "", v);
   printf "%s%*s\n", $0, (w - length(v) > 0 ? w - length(v) : 0), "" }' \
   "$TMP/raw.txt" > "$TMP/padded.txt"
 
+# Repaint into a real theme if one was asked for. Left alone, the images
+# come out in the renderer's own palette, which is nobody's terminal.
+if [ -n "${THEME:-}" ]; then
+	awk -f "$HELPERS/palette.awk" -v theme="$THEME" \
+		"$TMP/padded.txt" > "$TMP/themed.txt" && mv "$TMP/themed.txt" "$TMP/padded.txt"
+fi
+
 # Prefer the tools on PATH — the nix app supplies them — and fall back to
 # fetching them, so the script still works when run by hand.
 run() { if command -v "$1" >/dev/null 2>&1; then "$@"; else
 	local t=$1; shift; nix run "nixpkgs#$t" -- "$@"; fi; }
 
 run termshot -f "$OUT" -C "$COLS" --raw-read "$TMP/padded.txt" >/dev/null
+
+# termshot paints a line background only as tall as the glyphs, so the gaps
+# between lines keep the window's own near-black and a themed image comes out
+# striped. Repaint that colour to the theme's background; it is the window
+# chrome too, so the window ends up the colour a real terminal would be.
+if [ -n "${THEME:-}" ] && command -v magick >/dev/null 2>&1; then
+	bg=$(awk -f "$HELPERS/palette.awk" -v theme="$THEME" -v want=bg </dev/null)
+	magick "$OUT" -fuzz 4% -fill "#$bg" -opaque "#151515" "$OUT"
+fi
 run pngquant --force --skip-if-larger --output "$OUT" -- "$OUT" || true
 echo "wrote $OUT"

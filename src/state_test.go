@@ -102,35 +102,42 @@ func TestStateLabel(t *testing.T) {
 }
 
 // The three inactive cases must be visually distinguishable, or the label is
-// the only thing carrying the difference.
+// the only thing carrying the difference. Styles are compared by what they
+// declare rather than by what they render: the suite has no terminal, so
+// lipgloss would strip every colour and make them all look alike.
 func TestStateColorSeparatesInactiveCases(t *testing.T) {
+	look := func(st lipgloss.Style) [3]any {
+		return [3]any{st.GetForeground(), st.GetFaint(), st.GetBold()}
+	}
 	finished := Unit{Active: "inactive", Sub: "dead", Result: "success", ExecCode: execExited, ExecStatus: 0}
 	never := Unit{Active: "inactive", Sub: "dead", Result: "success", ExecCode: execNotRun}
 	skipped := Unit{Active: "inactive", Sub: "dead", Result: "success", ExecCode: execNotRun, CondResult: "no"}
 	failed := Unit{Active: "failed", Sub: "failed", Result: "exit-code", ExecCode: execExited, ExecStatus: 1}
 	running := Unit{Active: "active", Sub: "running"}
 
-	if stateColor(finished) == stateColor(never) {
+	if look(stateStyle(finished)) == look(stateStyle(never)) {
 		t.Error("a finished oneshot and one that never ran look identical")
 	}
-	if stateColor(failed) != colRed {
+	if stateStyle(failed).GetForeground() != colRed {
 		t.Error("a failed unit should be red")
 	}
-	if stateColor(running) != colGreen {
+	if stateStyle(running).GetForeground() != colGreen {
 		t.Error("a running unit should be green")
 	}
-	if stateColor(skipped) != colGrey {
-		t.Error("a skipped unit should be the quietest")
+	// The quietest state has no colour of its own — colour 8 is not safe as
+	// text, so it is the terminal's own foreground, dimmed.
+	if st := stateStyle(skipped); !st.GetFaint() || st.GetForeground() != (lipgloss.NoColor{}) {
+		t.Errorf("a skipped unit should be dimmed default, got fg=%v faint=%v", st.GetForeground(), st.GetFaint())
 	}
-	// Six hues carry meaning; anything else would be decoration.
+	// The hues that carry meaning; anything else would be decoration.
 	seen := map[lipgloss.TerminalColor]bool{}
 	for _, u := range []Unit{finished, never, skipped, failed, running,
 		{Active: "active", Sub: "exited"}, {Active: "activating", Sub: "start"}} {
-		seen[stateColor(u)] = true
+		seen[stateStyle(u).GetForeground()] = true
 	}
 	for c := range seen {
 		switch c {
-		case colRed, colGreen, colYellow, colCyan, colGrey:
+		case colRed, colGreen, colYellow, colCyan, lipgloss.NoColor{}:
 		default:
 			t.Errorf("state colouring reached outside the palette: %v", c)
 		}

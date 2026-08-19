@@ -4,6 +4,7 @@
 
 - [No charts — they were built and removed on request](feedback_no_charts.md) — the full view shows live numbers, not history; don't reintroduce sparklines
 - [Keys are deliberate: enter = full view, x = actions, f = follow](feedback_key_bindings.md) — earlier arrangements were rejected; check here before rebinding
+- [Only red and blue are readable on both real themes](project_palette_contrast.md) — measured contrast per ANSI index; why headings, the sorted column and frames stopped using hue and use weight instead
 
 ## systemd semantics
 

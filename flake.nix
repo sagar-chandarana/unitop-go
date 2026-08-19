@@ -8,7 +8,7 @@
       # unitop talks to systemd, so Linux only — but both common arches.
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
-      version = "0.3.1";
+      version = "0.3.2";
     in {
       packages = forAllSystems (pkgs: rec {
         unitop = pkgs.buildGoModule {
@@ -58,7 +58,7 @@
           program = "${pkgs.writeShellApplication {
             name = "unitop-screenshots";
             runtimeInputs = with pkgs; [
-              tmux perl gawk gnused coreutils termshot pngquant systemd procps
+              tmux perl gawk gnused coreutils termshot pngquant imagemagick systemd procps
             ];
             text = ''
               if [ ! -x docs/helpers/screenshot.sh ]; then
@@ -69,6 +69,10 @@
               export REAL_JOURNALCTL=${pkgs.systemd}/bin/journalctl
               export JOURNAL_REMOTE=${pkgs.systemd}/lib/systemd/systemd-journal-remote
               export FAKE_JOURNAL=1
+              # Render in a real terminal theme. termshot's own palette ignores SGR 2
+              # entirely, so every dimmed label came out at full strength and the
+              # images showed a flatter interface than the one that ships.
+              export THEME="''${THEME:-duskfox}"
 
               D="Down Down Down Down Down"
               # shellcheck disable=SC2086
