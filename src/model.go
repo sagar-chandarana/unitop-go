@@ -236,6 +236,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.ready = true
 		m.clampCursor()
+		// The log re-wraps to the new width, so the scroll offset can now point
+		// past the whole buffer — and an over-scrolled pane reads as empty.
+		m.clampLogScroll()
 		return m, nil
 
 	case tickMsg:
@@ -312,6 +315,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cut := len(m.logs) - maxLogLines
 				dropped = m.countDisplayLines(m.logs[:cut])
 				m.logs = m.logs[:copy(m.logs, m.logs[cut:])]
+				// Whatever beginning we had reached fell off the front with the
+				// cut; claiming it would make discarded history look complete.
+				m.logAtStart = false
 			}
 			if !m.totals.shifted(prev, len(m.logs), added-dropped,
 				m.logInnerWidth(), m.logEpoch, m.logWrap) {
@@ -607,6 +613,7 @@ func (m *model) escape() tea.Cmd {
 	case m.fullView:
 		m.fullView = false
 		m.focus = focusList
+		m.clampLogScroll() // same re-wrap as entering the full view
 		return m.syncJournal()
 	case m.focus == focusLogs:
 		m.focus = focusList
@@ -644,6 +651,9 @@ func (m *model) activateRow() tea.Cmd {
 	} else {
 		m.focus = focusList
 	}
+	// The pane width just changed, and syncJournal keeps the buffer when the
+	// unit did not change — so the offset must be re-clamped, not carried.
+	m.clampLogScroll()
 	return m.syncJournal()
 }
 
@@ -720,7 +730,8 @@ func (m *model) scrollLog(delta int) tea.Cmd {
 }
 
 func (m model) atTopOfLog() bool {
-	return m.logScroll >= m.logDisplayTotal()-m.logHeight()
+	// The +1 is the marker's own row; see clampLogScroll.
+	return m.logScroll >= m.logDisplayTotal()+1-m.logHeight()
 }
 
 // logBufferFull reports that no more history will be paged in.
@@ -1010,7 +1021,10 @@ func (m *model) clampCursor() {
 }
 
 func (m *model) clampLogScroll() {
-	total := m.logDisplayTotal()
+	// One extra step: the top marker is a display line above the buffer, so
+	// the window can rise one row past the data and show the buffer's first
+	// line beneath the marker instead of underneath it.
+	total := m.logDisplayTotal() + 1
 	maxScroll := max(0, total-m.logHeight())
 	if m.logScroll > maxScroll {
 		m.logScroll = maxScroll

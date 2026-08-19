@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func pagingModel(lines int) *model {
@@ -174,7 +176,7 @@ func TestBufferIsBounded(t *testing.T) {
 	if m.loadingOlder {
 		t.Error("a refused fetch left the loading flag set")
 	}
-	if got := stripANSI(m.logTopMarker(120)); !strings.Contains(got, "the most unitop keeps") {
+	if got := stripANSI(m.logTopMarker(120)); !strings.Contains(got, "unitop keeps the newest") {
 		t.Errorf("the limit is not explained: %q", got)
 	}
 
@@ -468,5 +470,209 @@ func TestLogWindowMatchesTheReference(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// A scroll offset that outlives the geometry it was clamped against — the
+// terminal widened, the pane went full-view — can point past the whole
+// re-wrapped buffer. The window must land on the buffer's top, never on the
+// empty-pane notice, which asserts the unit has written nothing while
+// thousands of lines are held.
+func TestOverScrolledWindowShowsTheBufferNotTheEmptyNotice(t *testing.T) {
+	m := pagingModel(50)
+	m.logScroll = 100000 // as left behind by a much narrower wrapping
+
+	win := m.renderLogWindow(80, 5)
+	if len(win) == 0 {
+		t.Fatal("an over-scrolled window rendered nothing")
+	}
+	for _, line := range win {
+		if strings.Contains(stripANSI(line), "written nothing") {
+			t.Fatalf("over-scrolled window shows the empty-log notice: %q", stripANSI(line))
+		}
+	}
+	// The paused marker reports the offset the window was actually drawn
+	// at (50 lines, height 5, marker row: 46), not the stale 100000.
+	if joined := stripANSI(strings.Join(win, "\n")); !strings.Contains(joined, "paused, 46 lines below") {
+		t.Errorf("paused marker not corrected:\n%s", joined)
+	}
+
+	// It aims at the top: the same lines a properly clamped scroll shows.
+	m.logScroll = 0
+	for i := 0; i < 500 && !m.atTopOfLog(); i++ {
+		m.logKey("pgup")
+	}
+	m.loadingOlder = false // pgup asked for older entries; the marker differs
+	top := m.renderLogWindow(80, 5)
+	for i := 1; i < len(win)-1; i++ { // [0] and the last line carry markers
+		if win[i] != top[i] {
+			t.Errorf("line %d: over-scrolled %q, scrolled-to-top %q",
+				i, stripANSI(win[i]), stripANSI(top[i]))
+		}
+	}
+}
+
+// Geometry changes re-wrap the buffer, so every one of them must re-clamp the
+// scroll offset: the resize handler and both full-view transitions.
+func TestGeometryChangesReclampTheLogScroll(t *testing.T) {
+	limit := func(m *model) int {
+		return max(0, m.logDisplayTotal()+1-m.logHeight()) // +1: the marker row
+	}
+	deepScroll := func(m *model) {
+		m.logScroll = limit(m) + 100000
+	}
+
+	m := pagingModel(50)
+	deepScroll(m)
+	m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+	if got, want := m.logScroll, limit(m); got > want {
+		t.Errorf("resize left logScroll=%d, limit is %d", got, want)
+	}
+
+	m = pagingModel(50)
+	deepScroll(m)
+	if m.activateRow(); !m.fullView {
+		t.Fatal("enter did not open the full view")
+	}
+	if got, want := m.logScroll, limit(m); got > want {
+		t.Errorf("entering full view left logScroll=%d, limit is %d", got, want)
+	}
+
+	deepScroll(m)
+	m.escape()
+	if m.fullView {
+		t.Fatal("esc did not close the full view")
+	}
+	if got, want := m.logScroll, limit(m); got > want {
+		t.Errorf("leaving full view left logScroll=%d, limit is %d", got, want)
+	}
+}
+
+// Once trimming has discarded the oldest retained entries, the beginning of
+// the journal — even if we once held it — is gone, and the top marker must
+// say the buffer is full rather than claim the history is complete.
+func TestTrimmingForgetsTheJournalBeginning(t *testing.T) {
+	m := pagingModel(maxLogLines + logTrimSlack)
+	m.logAtStart = true
+
+	m.Update(journalBatch{gen: m.logGen, lines: []logLine{{msg: "one more", cursor: "z"}}})
+	if len(m.logs) != maxLogLines {
+		t.Fatalf("expected the batch to trim to the cap, buffer holds %d", len(m.logs))
+	}
+	if m.logAtStart {
+		t.Error("the beginning fell off the front, but logAtStart still claims it")
+	}
+	if got := stripANSI(m.logTopMarker(120)); !strings.Contains(got, "buffer full") {
+		t.Errorf("top marker after trimming: %q", got)
+	}
+}
+
+// The top marker states the retention policy. A live count rides above the
+// cap between trims — deliberately — so any exact "N lines held" is false
+// most of the time and jitters between frames besides.
+func TestBufferFullMarkerIsStable(t *testing.T) {
+	at := func(lines int) string {
+		m := pagingModel(lines)
+		return stripANSI(m.logTopMarker(120))
+	}
+	capped, riding := at(maxLogLines), at(maxLogLines+logTrimSlack)
+	if capped != riding {
+		t.Errorf("marker changed with the buffer's momentary length:\n at cap %q\n riding %q", capped, riding)
+	}
+	if want := strconv.Itoa(maxLogLines); !strings.Contains(capped, want) {
+		t.Errorf("marker %q does not state the %s-line contract", capped, want)
+	}
+}
+
+// The top marker is a row of its own. Painted over the oldest visible line it
+// made that line unreachable — the clamp allows no step that would bring it
+// back — and a one-entry journal showed only the marker.
+func TestTopMarkerDoesNotEatData(t *testing.T) {
+	// A one-entry journal shows the entry and the marker.
+	m := pagingModel(1)
+	m.logAtStart = true
+	win := m.renderLogWindow(120, 5)
+	joined := stripANSI(strings.Join(win, "\n"))
+	if !strings.Contains(joined, "beginning of this unit's journal") {
+		t.Errorf("no top marker over a complete one-entry journal:\n%s", joined)
+	}
+	if !strings.Contains(joined, "line") {
+		t.Errorf("the only entry is not shown:\n%s", joined)
+	}
+
+	// At the true top of a buffer taller than the window, the very first
+	// display line sits beneath the marker instead of underneath it.
+	m = pagingModel(200)
+	for i := 0; i < 500 && !m.atTopOfLog(); i++ {
+		m.logKey("pgup")
+	}
+	m.loadingOlder = false
+	win = m.renderLogWindow(120, m.logHeight())
+	if len(win) != m.logHeight() {
+		t.Fatalf("top window has %d rows, the pane has %d", len(win), m.logHeight())
+	}
+	first := m.formatLog(m.logs[0], 120)[0]
+	if win[1] != first {
+		t.Errorf("row under the marker is %q, the buffer starts with %q",
+			stripANSI(win[1]), stripANSI(first))
+	}
+}
+
+// A stale offset between the valid maximum and the buffer's total used to
+// slip through the retry: the walk found some lines, declared victory, and
+// left blank rows while entries sat below the window — and the paused marker
+// printed the stale offset rather than the one the window was drawn at.
+func TestStaleScrollBetweenMaxAndTotalFillsTheWindow(t *testing.T) {
+	m := pagingModel(100)
+	// 100 one-line entries at height 20: the marker-aware maximum is 81. An
+	// offset of 85 leaves only 15 lines above it.
+	m.logScroll = 85
+	win := m.renderLogWindow(120, 20)
+	if len(win) != 20 {
+		t.Fatalf("window has %d rows of 20", len(win))
+	}
+	joined := stripANSI(strings.Join(win, "\n"))
+	if !strings.Contains(joined, "paused, 81 lines below") {
+		t.Errorf("paused marker does not show the effective offset:\n%s", joined)
+	}
+}
+
+// logHeight bottoms out at one row. A one-row window at the true top holds
+// nothing but the top marker's slack, and painting the paused marker there
+// indexed win[-1]; on two rows the two markers would consume both. The paused
+// marker now needs more than one data line to paint over.
+func TestOneAndTwoRowWindows(t *testing.T) {
+	m := pagingModel(30)
+	total := m.logDisplayTotal()
+
+	// Every offset at height 1 draws exactly one row, including offsets past
+	// the maximum, which the retry corrects rather than panics on.
+	for skip := 0; skip <= total+5; skip++ {
+		m.logScroll = skip
+		if win := m.renderLogWindow(120, 1); len(win) != 1 {
+			t.Fatalf("height 1, scroll %d: %d rows", skip, len(win))
+		}
+	}
+
+	// The top step is the marker; one step below it is the oldest data line.
+	first := stripANSI(m.formatLog(m.logs[0], 120)[0])
+	m.logScroll = total
+	if got := stripANSI(m.renderLogWindow(120, 1)[0]); !strings.Contains(got, "keep scrolling") {
+		t.Errorf("top step at height 1 is not the top marker: %q", got)
+	}
+	m.logScroll = total - 1
+	if got := stripANSI(m.renderLogWindow(120, 1)[0]); got != first {
+		t.Errorf("one step below the top shows %q, not the oldest line %q", got, first)
+	}
+
+	// Height 2 at the true top: the marker and the oldest line, whatever the
+	// stale offset was.
+	m.logScroll = 1 << 20
+	win := m.renderLogWindow(120, 2)
+	if len(win) != 2 {
+		t.Fatalf("height 2 at the top: %d rows", len(win))
+	}
+	if got := stripANSI(win[1]); got != first {
+		t.Errorf("row under the marker is %q, not the oldest line %q", got, first)
 	}
 }

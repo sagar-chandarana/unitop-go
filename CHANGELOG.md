@@ -8,6 +8,28 @@ to change.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A deeply scrolled log pane no longer claims the unit has written nothing
+  to the journal.** The scroll offset is measured in wrapped display lines, so
+  widening the terminal or opening the full view — both of which re-wrap the
+  buffer — could leave it pointing past everything held, and the pane rendered
+  the empty-journal notice over a full buffer. The offset is re-clamped at
+  every geometry change, and a window handed a stale offset lands on the
+  buffer's top rather than past it.
+- **The marker at the top of the buffer sits on a row of its own.** It was
+  painted over the oldest visible line, which the scroll clamp then made
+  unreachable — and a one-entry journal showed only the marker. The scroll
+  range gains exactly one step to pay for the row.
+- **A trimmed buffer no longer claims to start at the journal's beginning.**
+  Once the buffer is at its cap every batch discards the oldest lines, but the
+  "beginning of this unit's journal" marker survived the discard, presenting
+  incomplete history as complete.
+- **The buffer-full marker states the retention policy** ("unitop keeps the
+  newest 20000 lines") instead of a live count, which deliberately rides up to
+  2048 lines above the cap between trims — so the old number was usually wrong
+  and jittered from frame to frame.
+
 ## [0.3.2] — 2026-08-19
 
 A readability release: unitop no longer leans on colours that some themes are

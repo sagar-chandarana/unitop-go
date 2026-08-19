@@ -16,6 +16,7 @@
 
 ## Working on this repo
 
+- [Code-review findings start as a provenance-pinned pending queue](feedback-review-todo-workflow.md) — record model, date, exact revision, evidence and eventual outcome in `TODO.md` before treating a finding as accepted
 - [Verifying the TUI needs a pty, and frames arrive as diffs](feedback_verify_tui_with_pty.md) — the `script` recipe plus why captured output looks like overlapping half-screens
 - [Rendering bugs hide in sizes nobody tests](feedback_layout_invariant.md) — one over-wide line spoils the whole screen; the matrix that found six, and why to re-run it with the backstop off
 - [`-H` needs no second machine](feedback_verify_remote_with_local_sshd.md) — `docs/helpers/local-sshd.sh`; it settled a wrong report about ssh's `--` that reading could not

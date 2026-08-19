@@ -135,8 +135,10 @@ func (m model) countDisplayLines(lines []logLine) int {
 
 // logTotals memoises the wrapped height of the whole buffer. Every scroll key
 // needs it, and re-wrapping 20k retained entries per keypress made scrolling
-// visibly slow. Keyed on the buffer's epoch so a trim-and-append that leaves
-// the length unchanged still invalidates it.
+// visibly slow. Keyed on the buffer's epoch and length. A batch that appends
+// and trims keeps the memo valid by shifting it (see shifted below) without
+// touching the epoch; the epoch is bumped for exactly the changes a shift
+// cannot describe, and the recount in logDisplayTotal catches those.
 type logTotals struct {
 	epoch, n, width, total int
 	wrap                   bool
@@ -1111,8 +1113,6 @@ func (m model) unitStats(u Unit) []string {
 	return stats
 }
 
-// renderLogWindow walks the buffer backwards so only the visible tail is ever
-// wrapped, regardless of how many lines are retained.
 // renderLogWindow draws the slice of the buffer that is on screen: the `height`
 // display lines ending `logScroll` lines above the newest.
 //
@@ -1130,37 +1130,60 @@ func (m model) renderLogWindow(width, height int) []string {
 
 	skip := m.logScroll // display lines below the window, not drawn
 	win := make([]string, 0, height)
-	for i := len(m.logs) - 1; i >= 0 && len(win) < height; i-- {
-		_, segs := m.logSegments(m.logs[i], width)
-		if skip >= len(segs) {
-			skip -= len(segs) // this entry is entirely below the window
-			continue
+	for {
+		rest := skip
+		for i := len(m.logs) - 1; i >= 0 && len(win) < height; i-- {
+			_, segs := m.logSegments(m.logs[i], width)
+			if rest >= len(segs) {
+				rest -= len(segs) // this entry is entirely below the window
+				continue
+			}
+			lines := m.formatLog(m.logs[i], width)
+			if rest > 0 { // it straddles the bottom edge
+				lines = lines[:len(lines)-rest]
+				rest = 0
+			}
+			for j := len(lines) - 1; j >= 0 && len(win) < height; j-- {
+				win = append(win, lines[j]) // newest first for now
+			}
 		}
-		lines := m.formatLog(m.logs[i], width)
-		if skip > 0 { // it straddles the bottom edge
-			lines = lines[:len(lines)-skip]
-			skip = 0
+		if len(win) == height {
+			break // the window filled: the offset was valid at this width
 		}
-		for j := len(lines) - 1; j >= 0 && len(win) < height; j-- {
-			win = append(win, lines[j]) // newest first for now
+		// The walk ran out of entries, so it has measured the buffer: the
+		// lines skipped below the window plus the lines drawn. A scroll offset
+		// above the marker-aware maximum for this height is stale — the pane
+		// re-wrapped and nothing has clamped it yet — and used to render an
+		// under-filled window, or the empty-pane notice: an assertion that
+		// the unit never logged, made while thousands of lines are held.
+		// Re-aim at the highest valid offset and go again.
+		total := skip - rest + len(win)
+		maxSkip := max(0, total+1-height)
+		if skip <= maxSkip {
+			break // a genuinely short buffer; the marker fills the slack
 		}
+		skip, win = maxSkip, win[:0]
 	}
 	for l, r := 0, len(win)-1; l < r; l, r = l+1, r-1 {
 		win[l], win[r] = win[r], win[l]
 	}
-	if len(win) == 0 {
-		return m.emptyLogNotice()
-	}
-
-	// The bottom line says how far behind the live end you are.
-	if m.logScroll > 0 {
-		marker := stWarn.Render(fmt.Sprintf("── paused, %d lines below (f or end to follow) ──", m.logScroll))
+	// The bottom line says how far behind the live end you are — the effective
+	// offset the window was drawn at, which a stale m.logScroll may exceed. It
+	// is painted over a data line, so it needs more than one to paint over: a
+	// one-row window at the true top holds nothing at all (the top marker's
+	// slack is the whole window, and win[-1] is a panic), and painting over a
+	// window's only line would hide every data row there is.
+	if skip > 0 && len(win) > 1 {
+		marker := stWarn.Render(fmt.Sprintf("── paused, %d lines below (f or end to follow) ──", skip))
 		win[len(win)-1] = truncANSI(marker, width)
 	}
-	// The top line says where this buffer came from, so its first entry is
-	// never mistaken for the start of the journal.
-	if m.atTopOfLog() {
-		win[0] = truncANSI(m.logTopMarker(width), width)
+	// The top row says where this buffer came from, so its first entry is
+	// never mistaken for the start of the journal. It is a row of its own —
+	// the walk left room for it whenever the window rose past the data —
+	// because painting it over the oldest visible line made that line
+	// unreachable: the clamp allows no step that would bring it back.
+	if len(win) < height {
+		win = append([]string{truncANSI(m.logTopMarker(width), width)}, win...)
 	}
 	return win
 }
@@ -1212,8 +1235,11 @@ func (m model) logTopMarker(width int) string {
 	case m.logAtStart:
 		return stFaint.Render("── beginning of this unit's journal ──")
 	case m.logBufferFull():
+		// The retention policy, not the live count: between trims the buffer
+		// deliberately rides up to logTrimSlack past the cap, so any exact
+		// number here would be false most of the time and jitter besides.
 		return stWarn.Render(fmt.Sprintf(
-			"── %d lines held, the most unitop keeps; use journalctl for more ──", len(m.logs)))
+			"── buffer full: unitop keeps the newest %d lines; use journalctl for more ──", maxLogLines))
 	default:
 		return stFaint.Render("── earlier entries exist; keep scrolling to load ──")
 	}
