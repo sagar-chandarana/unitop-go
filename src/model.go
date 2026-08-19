@@ -14,7 +14,12 @@ const (
 	// under it; paging backwards stops there rather than trimming, because the
 	// lines it would drop are the ones being read. 20k entries is far more
 	// history than anyone scrolls by hand — past that, use journalctl.
-	maxLogLines    = 20000
+	maxLogLines = 20000
+	// Trimming moves every retained entry, so it happens in blocks rather than
+	// on every arriving line. The cap is a retention limit, not an invariant
+	// the rest of the code leans on, and paying that move per batch made a full
+	// buffer by far the most expensive state unitop could be in.
+	logTrimSlack   = 2048
 	journalBacklog = 500
 )
 
@@ -126,7 +131,12 @@ type model struct {
 	// Paging backwards through the journal: unitop starts with the last
 	// journalBacklog entries and fetches earlier pages when you scroll to the
 	// top, rather than pretending that is where the log begins.
-	logEpoch     int        // bumped on every change to logs, to invalidate totals
+	// logEpoch invalidates the memoised buffer height. It is bumped by every
+	// change to logs *except* a plain append, which extends the memo instead —
+	// see logTotals.shifted, and keep the two in step: bumping it here as well
+	// would quietly restore the full recount on every batch that the memo
+	// exists to avoid.
+	logEpoch     int
 	totals       *logTotals // memoised wrapped height of the buffer
 	loadingOlder bool
 	// logBacklogDone: the first phase of the stream has finished, so an empty
@@ -287,18 +297,34 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logBacklogDone = true
 		}
 		if len(msg.lines) > 0 {
+			// The height of the arriving lines, measured once: the anchored
+			// view moves by it, and the memoised total grows by it.
+			added := m.countDisplayLines(msg.lines)
+			prev := len(m.logs)
+
 			m.logs = append(m.logs, msg.lines...)
-			if len(m.logs) > maxLogLines {
-				m.logs = append([]logLine(nil), m.logs[len(m.logs)-maxLogLines:]...)
+			dropped := 0
+			if len(m.logs) > maxLogLines+logTrimSlack {
+				// Measure what is about to fall off the front before it goes:
+				// once the buffer is at the cap every batch trims, and leaving
+				// the memo to recount from scratch each time is what made a
+				// full buffer cost more than everything else put together.
+				cut := len(m.logs) - maxLogLines
+				dropped = m.countDisplayLines(m.logs[:cut])
+				m.logs = m.logs[:copy(m.logs, m.logs[cut:])]
 			}
-			m.logEpoch++
+			if !m.totals.shifted(prev, len(m.logs), added-dropped,
+				m.logInnerWidth(), m.logEpoch, m.logWrap) {
+				m.logEpoch++ // the memo did not describe this buffer; recount
+			}
+
 			if m.logFollow {
 				m.logScroll = 0
 			} else {
 				// Keep the reader anchored where they scrolled to, but never
 				// above the buffer: a position with nothing behind it renders
 				// as an empty pane.
-				m.logScroll += m.countDisplayLines(msg.lines)
+				m.logScroll += added
 				m.clampLogScroll()
 			}
 		}

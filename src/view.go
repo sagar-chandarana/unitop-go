@@ -127,7 +127,8 @@ func (m model) countDisplayLines(lines []logLine) int {
 	w := m.logInnerWidth()
 	n := 0
 	for _, l := range lines {
-		n += len(m.formatLog(l, w))
+		_, segs := m.logSegments(l, w)
+		n += len(segs)
 	}
 	return n
 }
@@ -139,6 +140,29 @@ func (m model) countDisplayLines(lines []logLine) int {
 type logTotals struct {
 	epoch, n, width, total int
 	wrap                   bool
+}
+
+// shifted adjusts the memo for lines added at the end and dropped from the
+// front, rather than throwing it away. Invalidating on every batch meant
+// re-wrapping the whole buffer each time one arrived — and the pane asks for
+// the total on every frame.
+//
+// Both halves matter. Extending alone still recounted everything once the
+// buffer reached maxLogLines, because from then on every batch also trims: at
+// the cap a frame cost 34ms and 27MB, which is where a chatty service ends up
+// and stays. Both ends of the buffer are known at the call site, so both can be
+// accounted for.
+//
+// It refuses unless the memo describes exactly the buffer that changed; a page
+// prepended at the top, or a change of width or wrapping, still falls back to a
+// full recount.
+func (c *logTotals) shifted(prevLen, newLen, delta, width, epoch int, wrap bool) bool {
+	if c == nil || c.epoch != epoch || c.n != prevLen || c.width != width || c.wrap != wrap {
+		return false
+	}
+	c.total += delta
+	c.n = newLen
+	return true
 }
 
 func (m model) logDisplayTotal() int {
@@ -1089,24 +1113,44 @@ func (m model) unitStats(u Unit) []string {
 
 // renderLogWindow walks the buffer backwards so only the visible tail is ever
 // wrapped, regardless of how many lines are retained.
+// renderLogWindow draws the slice of the buffer that is on screen: the `height`
+// display lines ending `logScroll` lines above the newest.
+//
+// It walks back from the newest entry, measuring each without rendering it, and
+// styles only the entries the window actually touches. The obvious version —
+// format each entry and prepend its lines to an accumulator until there are
+// enough — is quadratic, because every prepend copies everything built so far,
+// and it renders every line between the window and the bottom whether it is
+// visible or not. Scrolled ten thousand lines back in a full buffer, one frame
+// took 129ms and allocated 430MB.
 func (m model) renderLogWindow(width, height int) []string {
-	need := height + m.logScroll
-	var acc []string
-	for i := len(m.logs) - 1; i >= 0 && len(acc) < need; i-- {
-		acc = append(m.formatLog(m.logs[i], width), acc...)
-	}
-	if len(acc) == 0 {
+	if len(m.logs) == 0 {
 		return m.emptyLogNotice()
 	}
-	end := min(len(acc), len(acc)-m.logScroll)
-	if end < 0 {
-		end = 0
+
+	skip := m.logScroll // display lines below the window, not drawn
+	win := make([]string, 0, height)
+	for i := len(m.logs) - 1; i >= 0 && len(win) < height; i-- {
+		_, segs := m.logSegments(m.logs[i], width)
+		if skip >= len(segs) {
+			skip -= len(segs) // this entry is entirely below the window
+			continue
+		}
+		lines := m.formatLog(m.logs[i], width)
+		if skip > 0 { // it straddles the bottom edge
+			lines = lines[:len(lines)-skip]
+			skip = 0
+		}
+		for j := len(lines) - 1; j >= 0 && len(win) < height; j-- {
+			win = append(win, lines[j]) // newest first for now
+		}
 	}
-	win := acc[max(0, end-height):end]
+	for l, r := 0, len(win)-1; l < r; l, r = l+1, r-1 {
+		win[l], win[r] = win[r], win[l]
+	}
 	if len(win) == 0 {
-		return win
+		return m.emptyLogNotice()
 	}
-	win = append([]string(nil), win...)
 
 	// The bottom line says how far behind the live end you are.
 	if m.logScroll > 0 {
@@ -1175,9 +1219,18 @@ func (m model) logTopMarker(width int) string {
 	}
 }
 
-// formatLog renders one journal entry into the wrapped display lines it needs.
-func (m model) formatLog(l logLine, width int) []string {
-	prefix := l.ts.Format("15:04:05") + " "
+// logSegments splits one journal entry into the display lines it occupies,
+// unstyled, and returns the timestamp column that goes in front of the first.
+//
+// It is separate from formatLog because counting is not rendering. The pane's
+// scroll arithmetic needs the *height* of every line in the buffer — all 20k of
+// them, recomputed whenever the buffer changes — while only the ~30 on screen
+// need to be styled. Going through formatLog for the count built a lipgloss
+// style and rendered every segment of every buffered entry just to take len()
+// of the result, and threw the strings away: three quarters of unitop's CPU,
+// with a chatty service selected.
+func (m model) logSegments(l logLine, width int) (prefix string, segs []string) {
+	prefix = l.ts.Format("15:04:05") + " "
 	body := l.msg
 	if l.meta {
 		body = "⟨unitop⟩ " + l.msg
@@ -1193,7 +1246,6 @@ func (m model) formatLog(l logLine, width int) []string {
 	// rather than emitting a newline into the middle of a rendered row, which
 	// puts the rest of the pane wherever the terminal's cursor lands.
 	avail := max(4, width-len(prefix))
-	var segs []string
 	for _, para := range strings.Split(body, "\n") {
 		if m.logWrap {
 			segs = append(segs, wrapWords(para, avail)...)
@@ -1201,16 +1253,24 @@ func (m model) formatLog(l logLine, width int) []string {
 			segs = append(segs, truncRunes(para, avail))
 		}
 	}
+	return prefix, segs
+}
+
+// formatLog renders one journal entry into the wrapped display lines it needs.
+func (m model) formatLog(l logLine, width int) []string {
+	prefix, segs := m.logSegments(l, width)
 
 	style := lipgloss.NewStyle().Foreground(prioColor(l.prio))
 	if l.prio <= 3 {
 		style = style.Bold(true)
 	}
+	faded := stFaint.Render(prefix)
+	blank := strings.Repeat(" ", len(prefix))
 	out := make([]string, 0, len(segs))
 	for i, s := range segs {
-		p := stFaint.Render(prefix)
+		p := faded
 		if i > 0 {
-			p = strings.Repeat(" ", len(prefix))
+			p = blank
 		}
 		out = append(out, p+style.Render(s))
 	}

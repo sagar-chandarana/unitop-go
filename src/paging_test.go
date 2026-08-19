@@ -178,10 +178,17 @@ func TestBufferIsBounded(t *testing.T) {
 		t.Errorf("the limit is not explained: %q", got)
 	}
 
-	// Live entries still arrive, and still trim the oldest to hold the line.
-	m.Update(journalBatch{gen: m.logGen, lines: []logLine{{msg: "new", cursor: "z"}}})
-	if len(m.logs) > maxLogLines {
-		t.Errorf("live append blew the cap: %d lines", len(m.logs))
+	// Live entries still arrive, and still trim the oldest to hold the line —
+	// in blocks, so the buffer rides up to logTrimSlack over the cap between
+	// trims rather than moving every retained entry on every arriving line.
+	for i := 0; i < logTrimSlack*2; i++ {
+		m.Update(journalBatch{gen: m.logGen, lines: []logLine{{msg: "new", cursor: "z"}}})
+		if len(m.logs) > maxLogLines+logTrimSlack {
+			t.Fatalf("live append blew the cap: %d lines", len(m.logs))
+		}
+		if len(m.logs) < maxLogLines {
+			t.Fatalf("trimmed below the cap: %d lines", len(m.logs))
+		}
 	}
 	if m.logs[len(m.logs)-1].msg != "new" {
 		t.Error("the newest line was not kept")
@@ -306,6 +313,160 @@ func TestMotionKeysHaveOneMeaningEach(t *testing.T) {
 		if m.interval != d {
 			t.Errorf("%q still changes the interval; it was removed", k)
 			m.interval = d
+		}
+	}
+}
+
+// The memoised buffer height is grown incrementally as lines arrive, instead of
+// being recomputed from scratch. It must agree with the full recount at every
+// step: the pane's scroll arithmetic is built on it, so a drift here is a view
+// that scrolls to the wrong place or thinks it has reached the top when it has
+// not.
+func TestIncrementalHeightAgreesWithRecount(t *testing.T) {
+	m := pagingModel(0)
+	m.focus = focusLogs
+
+	check := func(what string) {
+		t.Helper()
+		got := m.logDisplayTotal()
+		want := m.countDisplayLines(m.logs)
+		if got != want {
+			t.Fatalf("%s: memo says %d display lines, recount says %d", what, got, want)
+		}
+	}
+	batch := func(n int, msg string) {
+		lines := make([]logLine, 0, n)
+		for i := 0; i < n; i++ {
+			lines = append(lines, logLine{ts: time.Now(), prio: 6,
+				msg: msg + " " + strconv.Itoa(i), cursor: "s=x;i=" + strconv.Itoa(i)})
+		}
+		m.Update(journalBatch{gen: m.logGen, lines: lines})
+	}
+
+	check("empty")
+	batch(5, "short")
+	check("after one batch")
+	batch(3, strings.Repeat("a long line that will certainly wrap several times ", 4))
+	check("after a batch of wrapping lines")
+	for i := 0; i < 20; i++ {
+		batch(7, "steady traffic")
+	}
+	check("after steady traffic")
+
+	// A narrower pane rewraps everything; the memo must not be trusted across it.
+	m.width = 90
+	check("after a resize")
+	batch(4, "more after the resize")
+	check("after a batch at the new width")
+
+	// Wrapping off and on again.
+	m.logWrap = false
+	check("with wrapping off")
+	batch(2, strings.Repeat("wide ", 40))
+	check("after a batch with wrapping off")
+	m.logWrap = true
+	check("with wrapping back on")
+
+	// A page prepended at the top is not an append.
+	older := []logLine{{ts: time.Now(), prio: 6, msg: "older", cursor: "s=x;i=old"}}
+	m.Update(olderBatch{gen: m.logGen, lines: older})
+	check("after paging backwards")
+	batch(3, "after the prepend")
+	check("after a batch following a prepend")
+
+	// And the trim at the buffer cap drops lines whose heights were counted.
+	for len(m.logs) < maxLogLines-10 {
+		batch(500, "filling")
+	}
+	check("near the cap")
+	batch(50, "over the cap")
+	if len(m.logs) < maxLogLines || len(m.logs) > maxLogLines+logTrimSlack {
+		t.Fatalf("buffer is %d, expected between %d and %d",
+			len(m.logs), maxLogLines, maxLogLines+logTrimSlack)
+	}
+	check("after the trim")
+}
+
+// referenceLogWindow is the straightforward implementation renderLogWindow
+// replaced: format every entry from the newest back, prepending, until there
+// are enough lines, then slice out the window. It is quadratic and renders
+// lines nobody sees, which is why it is only here — as the thing the fast one
+// has to agree with, exactly.
+func referenceLogWindow(m *model, width, height int) []string {
+	need := height + m.logScroll
+	var acc []string
+	for i := len(m.logs) - 1; i >= 0 && len(acc) < need; i-- {
+		acc = append(m.formatLog(m.logs[i], width), acc...)
+	}
+	if len(acc) == 0 {
+		return nil
+	}
+	end := min(len(acc), len(acc)-m.logScroll)
+	if end < 0 {
+		end = 0
+	}
+	return append([]string(nil), acc[max(0, end-height):end]...)
+}
+
+func TestLogWindowMatchesTheReference(t *testing.T) {
+	for _, wrap := range []bool{true, false} {
+		for _, width := range []int{40, 60, 132} {
+			m := pagingModel(0)
+			m.logWrap = wrap
+			// A mix of short lines, lines that wrap once, and lines that wrap
+			// many times — the entry straddling the window's edge is where an
+			// off-by-one hides.
+			for i := 0; i < 400; i++ {
+				msg := "short " + strconv.Itoa(i)
+				switch i % 3 {
+				case 1:
+					msg = strings.Repeat("medium length line ", 4) + strconv.Itoa(i)
+				case 2:
+					msg = strings.Repeat("a much longer line that wraps repeatedly ", 6) + strconv.Itoa(i)
+				}
+				m.logs = append(m.logs, logLine{ts: time.Now(), prio: 6, msg: msg,
+					cursor: "s=x;i=" + strconv.Itoa(i)})
+			}
+			m.logEpoch++
+
+			for _, height := range []int{1, 5, 20} {
+				// Measured at the width being rendered, not the model's own.
+				total := 0
+				for _, l := range m.logs {
+					_, segs := m.logSegments(l, width)
+					total += len(segs)
+				}
+				for _, scroll := range []int{0, 1, 2, 7, 50, 200, total - height} {
+					// Clamp to this height, not the model's: a window scrolled
+					// entirely past the buffer cannot happen in the app, and the
+					// two implementations say different things about it.
+					if scroll < 0 {
+						continue
+					}
+					m.logScroll = min(scroll, max(0, total-height))
+
+					got := m.renderLogWindow(width, height)
+					want := referenceLogWindow(m, width, height)
+					// The markers are painted on top by both paths equally;
+					// compare what is underneath.
+					if m.logScroll > 0 && len(want) > 0 {
+						want[len(want)-1] = got[len(got)-1]
+					}
+					if m.atTopOfLog() && len(want) > 0 {
+						want[0] = got[0]
+					}
+					if len(got) != len(want) {
+						t.Fatalf("wrap=%v w=%d h=%d scroll=%d: %d lines, reference gives %d",
+							wrap, width, height, m.logScroll, len(got), len(want))
+					}
+					for i := range want {
+						if got[i] != want[i] {
+							t.Fatalf("wrap=%v w=%d h=%d scroll=%d line %d:\n got %q\nwant %q",
+								wrap, width, height, m.logScroll, i, stripANSI(got[i]), stripANSI(want[i]))
+						}
+					}
+				}
+			}
 		}
 	}
 }
