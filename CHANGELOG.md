@@ -24,8 +24,10 @@ to change.
 
   Measuring and rendering are now separate, the memoised height is adjusted for
   lines added and dropped rather than thrown away, and trimming happens in
-  blocks instead of moving every entry per arriving line. A full buffer now
-  costs 12.1%, below 0.1.3 despite holding five times as much.
+  blocks rather than moving every retained entry per arriving line. That last
+  one trades a little memory for the saving: the buffer rides up to 2048
+  entries over its 20,000 cap between trims, around half a megabyte. A full
+  buffer now costs 12.1%, below 0.1.3 despite holding five times as much.
 - Scrolling far back in a large buffer was quadratic: each entry's lines were
   prepended to a growing accumulator, copying everything already built, and
   every line between the window and the bottom was rendered whether visible or
