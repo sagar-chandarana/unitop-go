@@ -8,40 +8,45 @@ to change.
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-08-19
+
+A performance release. Watching a service that logs steadily could take a whole
+core; it now takes less than 0.1.3 did, holding five times as much history.
+
 ### Fixed
 
-- **The log pane no longer saturates a core once its buffer fills.** Watching a
-  service that logs steadily, unitop reached 120% of one core — measured with a
-  full 20k buffer and 20 lines a second. 0.1.3 was 13.5% for the same work.
+- **The log pane no longer saturates a core once its buffer fills.** With a full
+  20k buffer and a service logging 20 lines a second, unitop reached 120% of one
+  core. 0.1.3 was 13.5% for the same work, and it is 12.1% now.
 
-  Two causes. Counting the buffer's height went through the renderer, building
-  a lipgloss style and rendering every segment of every held entry to take the
-  length of the result and throw the strings away — three quarters of all CPU.
-  And that count was redone from scratch on every batch: once the buffer is at
-  the cap every batch also trims, so it never stopped. **0.2.0 raised the cap
-  from 4000 lines to 20000 while keeping that design**, which is where this
-  came from; 0.3.0 inherited it.
+  Two causes, both older than they looked. Counting the buffer's height went
+  through the renderer — building a lipgloss style and rendering every segment
+  of every held entry, to take the length of the result and throw the strings
+  away. That alone was three quarters of all CPU. And the count was redone from
+  scratch on every batch, which never stopped once the buffer reached its cap,
+  because from then on every batch also trims. **0.2.0 raised the cap from 4000
+  lines to 20000 while keeping that design**, which is where this came from;
+  0.3.0 inherited it and added render cost on top.
 
-  Measuring and rendering are now separate, the memoised height is adjusted for
+  Measuring and rendering are separate now, the memoised height is adjusted for
   lines added and dropped rather than thrown away, and trimming happens in
   blocks rather than moving every retained entry per arriving line. That last
-  one trades a little memory for the saving: the buffer rides up to 2048
-  entries over its 20,000 cap between trims, around half a megabyte. A full
-  buffer now costs 12.1%, below 0.1.3 despite holding five times as much.
+  one trades a little memory for the saving: the buffer rides up to 2048 entries
+  over its 20,000 cap between trims, around half a megabyte.
 - Scrolling far back in a large buffer was quadratic: each entry's lines were
   prepended to a growing accumulator, copying everything already built, and
-  every line between the window and the bottom was rendered whether visible or
-  not. Ten thousand lines back, a single frame cost 129ms and allocated 430MB.
-  Only the entries actually on screen are styled now — 10ms, and 56× less
-  memory.
+  every line between the window and the bottom was rendered whether it was on
+  screen or not. Ten thousand lines back, a single frame cost 129ms and
+  allocated 430MB. Only the entries that appear are styled now — 10ms, and 56×
+  less memory.
 
 ### Changed
 
-- The readme screenshots show 0.3.0 — the boxed panes, the filter in the pane
-  title, the pane-scoped footer. `nix run .#screenshots` regenerates all four
-  from the current build, on any machine: the unit table and host stats are the
-  real ones, the journal is invented so it works where the real one cannot be
-  read, and the hostname is replaced on the way out.
+- The readme screenshots show the current UI: the boxed panes, the filter in
+  the pane title, the pane-scoped footer. `nix run .#screenshots` regenerates
+  all four from the build in your tree, on any machine — the unit table and host
+  stats are the real ones, the journal is invented so it works where the real
+  one cannot be read, and the hostname is replaced on the way out.
 
 ## [0.3.0] — 2026-08-18
 
@@ -321,7 +326,8 @@ First release.
 - Static `linux/amd64` and `linux/arm64` binaries, a flake with an overlay, and
   nothing to configure.
 
-[Unreleased]: https://github.com/sagar-chandarana/unitop-go/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/sagar-chandarana/unitop-go/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/sagar-chandarana/unitop-go/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/sagar-chandarana/unitop-go/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/sagar-chandarana/unitop-go/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/sagar-chandarana/unitop-go/compare/v0.1.2...v0.1.3
