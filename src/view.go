@@ -500,6 +500,30 @@ func hjoin(width int, left, right string) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
+// hjoinStatus is hjoin for a right side whose LAST element is critical
+// status — PAUSED, or NOT POLLING with its R hint. hjoin drops its whole
+// right side when the pair does not fit, and on a narrow header that hid
+// the one line saying the screen had stopped updating. Here the status
+// never drops: expendable metadata ahead of it yields first, then the left
+// side gives up cells, and only a status wider than the entire line would
+// itself be cut — no supported width does that to either phrase. Used only
+// for the critical states, so ordinary headers render exactly as before.
+func hjoinStatus(width int, left string, right []string, sep string) string {
+	for len(right) > 1 && lipgloss.Width(left)+lipgloss.Width(strings.Join(right, sep)) >= width {
+		right = right[1:]
+	}
+	r := strings.Join(right, sep)
+	rw := lipgloss.Width(r)
+	if rw >= width {
+		return truncANSI(r, width)
+	}
+	if gap := width - lipgloss.Width(left) - rw; gap >= 1 {
+		return left + strings.Repeat(" ", gap) + r
+	}
+	left = truncANSI(left, max(0, width-rw-1))
+	return left + strings.Repeat(" ", width-lipgloss.Width(left)-rw) + r
+}
+
 // ---------- host block ----------
 
 func (m model) viewHost() []string {
@@ -581,12 +605,18 @@ func (m model) viewHost() []string {
 	}
 
 	rule := stBorder.Render(strings.Repeat("━", m.width))
+	modeRow := func(left string) string {
+		if m.fatal || m.paused {
+			return hjoinStatus(m.width, left, mode, sep)
+		}
+		return hjoin(m.width, left, strings.Join(mode, sep))
+	}
 	if m.headerLines() == 2 {
 		one := strings.Join(append(ident, usage...), sep)
-		return []string{hjoin(m.width, one, strings.Join(mode, sep)), rule}
+		return []string{modeRow(one), rule}
 	}
 	return []string{
-		hjoin(m.width, strings.Join(ident, sep), strings.Join(mode, sep)),
+		modeRow(strings.Join(ident, sep)),
 		hjoin(m.width, strings.Join(usage, sep), units),
 		rule,
 	}

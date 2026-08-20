@@ -316,9 +316,9 @@ hardening opportunity.
   history rather than the true beginning.
 - **Review outcome:** Accepted (implemented by Claude Code/Fable 5, 2026-08-19; commit "Keep the log window honest about what the buffer holds"). The trim branch clears logAtStart; paging-while-full left untouched as a separate retention decision. Regression: TestTrimmingForgetsTheJournalBeginning.
 
-#### [ ] UT-018 — Preserve critical host status on narrow terminals
+#### [x] UT-018 — Preserve critical host status on narrow terminals
 
-- **Status:** Pending review
+- **Status:** Accepted — implemented
 - **Confidence:** High
 - **Evidence:** `src/view.go:473-480` drops the right-hand side of `hjoin` when
   both sides do not fit. The compact header at `src/view.go:563-567` puts
@@ -329,7 +329,7 @@ hardening opportunity.
   identity or usage fields.
 - **Regression coverage:** Assert visible paused and fatal status across the
   full supported width matrix.
-- **Review outcome:** _Pending._
+- **Review outcome:** Accepted and implemented (triage Codex/GPT-5, implementation Claude Code/Fable 5, 2026-08-20; commit "Never let the header hide that polling stopped"). hjoinStatus is the focused helper: the right side's LAST element is critical status and never drops — expendable metadata ahead of it (sort/tree/all/filter) yields first, then the left identity/usage side gives up cells via truncation; only a status wider than the whole line would be cut, which no supported width does to PAUSED or the full "NOT POLLING — R to retry" phrase. It is used only when fatal or paused, so ordinary headers render exactly as before (hjoin untouched — unit-detail stats keep their existing semantics, per the do-not-globalize instruction). Regressions: TestCriticalStatusSurvivesEveryHeaderShape (the worst expendable crowd — long host label, live stats, long filter, tree/all/reverse, failed units — across width-compact 40 and 75, boundary 76, height-compact 120×19, and roomy 200×40, asserting exact frame height, no row over width, PAUSED visible or BOTH stopped fragments visible) and TestNormalHeaderInventsNoStatus (healthy headers at three shapes claim nothing and keep their shape).
 
 #### [x] UT-019 — Disable SSH pseudo-terminal allocation explicitly
 

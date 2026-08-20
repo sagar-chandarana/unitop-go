@@ -10,6 +10,12 @@ to change.
 
 ### Fixed
 
+- **A narrow header can no longer hide that polling stopped.** The header's
+  right side was dropped whole when it did not fit beside a long hostname or
+  filter — and that side carries the only PAUSED or "NOT POLLING — R to
+  retry" indicator, on exactly the screens whose footer is busy showing the
+  error. The critical status now outranks everything: sort, tree, filter and
+  the identity fields yield first, at every supported size.
 - **The action menu can no longer execute what it is not showing.** Ten
   actions need twelve rows; a ten-row terminal has five. The popup is a
   viewport now — it follows the selection, says "↑n" and "n more ↓" at its
