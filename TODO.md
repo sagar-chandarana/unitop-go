@@ -59,9 +59,9 @@ hardening opportunity.
   bracketed-paste decoding drops malformed bytes before the model sees them.
 - **Review outcome:** Accepted and implemented (triage Codex/GPT-5, implementation Claude Code/Fable 5, 2026-08-20; commit "Sanitize every terminal ingress and give quitting one exit"). Sanitized at ingress: the shared KeyRunes branch (sanitizeText, so a bracketed paste's newlines/C0/escapes are neutralized before the editor holds them; KeySpace kept separate per UT-014; the journal grep stays one argv), the -f flag, and — the adjacent accepted gap review found — the hostLabel: -H or the local hostname was rendered raw on the startup screen, the header and inside troubleshooting advice; all three now render the sanitized label via sshTarget(), with the raw value retained only for the ssh transport. A raw -H that is nothing but a dropped escape sequence sanitizes to an empty label; it falls back to "remote" (remote-ness stays keyed on r.host, the transport keeps the raw value) — TestAllEscapeHostLabelFallsBackToRemote. Regressions: TestPasteIsSanitizedInBothEditors (hostile payload with exact expected text, no raw ESC in the editor, exact-height frame with the pasted sequence absent, ordinary Unicode untouched), TestInitialFilterFlagIsSanitized (invalid UTF-8 through -f, which real paste decoding cannot carry), TestHostLabelNeverReachesTheScreenRaw (remote -H, hostname-like local value, startup, failure+advice, connected header).
 
-#### [ ] UT-003 — Bound memory used by finite journal reads
+#### [x] UT-003 — Bound memory used by finite journal reads
 
-- **Status:** Pending review
+- **Status:** Accepted — implemented
 - **Confidence:** High
 - **Evidence:** `src/journal.go:94-104` and `src/journal.go:278-285` use
   `Cmd.Output()` and parse the complete result after it exits. This bypasses
@@ -75,7 +75,7 @@ hardening opportunity.
 - **Regression coverage:** Feed many near-limit entries and an oversized entry
   through both backlog and paging paths; assert bounded memory and a useful
   placeholder/error.
-- **Review outcome:** _Pending._
+- **Review outcome:** Accepted and implemented (triage Codex/GPT-5, implementation Claude Code/Fable 5, 2026-08-20; commit "Stream the finite journal reads and pump every stderr"). One streamed primitive (runFinite) serves backlog and backwards paging: newest-first through StdoutPipe, the 4 MiB per-record cap kept, a 16 MiB aggregate retained-page cap added, discard LATCHED after the first overflow so the page stays the contiguous newest prefix, and everything older drained through EOF — peak retention is the budget plus one bounded record, and the live 20k-entry model's count-based bound is a separate thing, unclaimed here. Truncation is partial success: an honest cursorless boundary meta line, the oldest retained cursor still anchoring the next page. Paging carries journalFields; the anchor is dropped by position (an oversized anchor is a cursorless placeholder but still the anchor); atEnd only when untruncated and fewer than n records followed; an unanchorable page returns blocked — terminal via atEnd plus the explanation, warnings preserved. Regressions: TestFiniteReadTruncatesHonestly, TestAggregateTruncationLatches (small-after-overflow), TestOversizedRecordsBecomePlaceholders, TestPageArgvCarriesJournalFields, TestAllCursorlessPageIsBlocked, TestBlockedPageDoesNotRelaunch.
 
 ### P2 — correctness and reliability
 
@@ -227,9 +227,9 @@ hardening opportunity.
   manual polls, and assert that exactly one replacement stream starts.
 - **Review outcome:** _Pending._
 
-#### [ ] UT-013 — Surface journal stderr while a follow remains alive
+#### [x] UT-013 — Surface journal stderr while a follow remains alive
 
-- **Status:** Pending review
+- **Status:** Accepted — implemented
 - **Confidence:** High
 - **Evidence:** Backlog uses `Cmd.Output()` at `src/journal.go:278-285`, which
   discards stderr on success. Follow mode attaches a `bytes.Buffer` at
@@ -242,7 +242,7 @@ hardening opportunity.
   and surface sanitized diagnostics while the process is running.
 - **Regression coverage:** Use a fake journalctl that writes a warning and then
   follows indefinitely; verify prompt display and bounded capture.
-- **Review outcome:** _Pending._
+- **Review outcome:** Accepted and implemented (same split, same commit). Every finite and follow command gets a concurrent stderrPump: 4 KiB per line (clipped lines raise the marker and keep their prefix), 64 KiB and 128 lines lifetime with exactly one "diagnostics suppressed" marker, draining forever after the caps so the child can never block, and notify muted for discarded lines so a flood cannot keep the UI select hot. Follow warnings surface while -f still runs; the tail keeps listening after stdout closes until the pump finishes; a silent nonzero exit is named in the done message; warn/flush/final all gate on cancellation. no-matches is classified from the captured result — exit 1, no records, no nonblank stdout notice, and no nonblank stderr anywhere in the drained stream, clipped and discarded bytes included. The blank predicate is Unicode-aware per 8 KiB read chunk, with one proven and accepted gap (Codex reproduced it): a multibyte space split across the chunk boundary reads as text, erring toward a real error message rather than a silent false no-match. Regressions: TestSuccessfulReadSurfacesStderr, TestStderrFloodIsBoundedAndMarked, TestStderrByteCapBindsAlone, TestClippedDiagnosticStillCounts, TestExitOneClassification, TestExitOneWithNoticeIsAnError, TestFollowWarningSurfacesWhileAlive, TestStderrOutlivesStdout, TestLiveFloodGoesQuietAfterSuppression, TestSilentNonzeroFollowExitIsNamed, TestCancelRacingNaturalEOF.
 
 #### [x] UT-014 — Insert one space per space keypress in filters
 
@@ -616,6 +616,32 @@ the cross-UID variant stays deferred; see the review outcome._
   correct the `logTotals` comment to describe the `shifted()` contract.
 - **Regression coverage:** None needed; documentation only.
 - **Review outcome:** Accepted (implemented by Claude Code/Fable 5, 2026-08-19; commit "Keep the log window honest about what the buffer holds"). The duplicate renderLogWindow doc is gone and logTotals' comment now describes the shifted() contract. Documentation only; no regression test. Addendum 2026-08-20: two production comments still claimed every batch trims at the cap — the trim site in model.go and the shifted() doc in view.go (which also framed the 34ms/27MB recount as the permanent at-cap frame rather than the periodic trim frame). False under block trimming: the buffer rides to cap+slack and trims every few hundred batches. Both corrected in the UT-029 commit. Second addendum: a third copy lived in the Unreleased changelog text itself ("every batch discards the oldest lines") — reworded to block-trimming in the UT-005/006/014 commit.
+
+## Pending review — joint follow-ups
+
+Found by adversarial review during implementation of earlier fixes.
+
+#### [ ] UT-031 — Own every poll and action child at exit
+
+- **Status:** Pending review
+- **Confidence:** High (triaged by Codex/GPT-5, 2026-08-20, during the
+  UT-015 ownership audit)
+- **Evidence:** `pollCmd` (25s timeout) and `runAction` (90s) derive their
+  contexts from `context.Background()` and launch systemctl/sudo — or the
+  ssh carrying them — inside Bubble Tea Cmd goroutines, which Program does
+  not await at shutdown.
+- **Impact:** Quitting during a slow startup poll or a unit action can
+  leave a child alive — and an action still mutating a unit — after the UI
+  exits.
+- **Suggested resolution:** A stable program-work owner: one root context,
+  a mutex-guarded closing gate, and a WaitGroup. Begin before launch and
+  refuse after closing; derive the 25s/90s timeouts from the root; cancel
+  and wait on model quit and after p.Run() returns; close the SSH mux only
+  after the wait completes.
+- **Regression coverage:** Local and remote quiet poll and action
+  children; a Cmd queued after shutdown is refused and launches nothing;
+  exact reaping before shutdown returns; mux-close ordering.
+- **Review outcome:** _Pending._
 
 ## Review process
 

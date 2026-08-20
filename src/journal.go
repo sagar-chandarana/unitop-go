@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -105,39 +106,57 @@ func fetchOlder(js *journalStream, r runner, unit, cursor string, f logFilter, n
 
 		args := append([]string{
 			"-u", unit, "--cursor", cursor, "--reverse",
-			"-n", strconv.Itoa(n + 1), "--no-pager", "-o", "json",
+			"-n", strconv.Itoa(n + 1), "--no-pager", "-o", "json", journalFields,
 		}, f.args()...)
-		out, err := r.command(ctx, "journalctl", args...).Output()
-		if err != nil {
-			// Nothing older matched, which is the start of the journal as far
-			// as this filter is concerned — not a failure to read it.
-			if noMatches(err) {
-				return olderBatch{gen: gen, atEnd: true}
+		res := runFinite(ctx, r, args, n+1)
+		if res.err != nil {
+			return olderBatch{gen: gen, err: res.errText()}
+		}
+		if res.records == 0 {
+			// Nothing at all: a -g that matched nothing older, or the very
+			// start of the journal. Not a failure to read it — and captured
+			// warnings still belong on screen.
+			return olderBatch{gen: gen, atEnd: true, lines: warningLines(res.warnings)}
+		}
+		// The anchor is dropped by POSITION: --cursor --reverse returns it
+		// first, whatever it looks like. An entry too large to hold comes
+		// back as a cursorless placeholder, and matching on cursor equality
+		// would mistake it for data — and keep fetching the same page.
+		kept := res.newestFirst
+		if len(kept) > 0 {
+			kept = kept[1:]
+		}
+		if len(kept) == 0 {
+			if res.truncated {
+				// Terminal, not retryable: atEnd stops the next top-scroll
+				// relaunching this identical page forever.
+				return olderBatch{gen: gen, atEnd: true, lines: warningLines(res.warnings),
+					err: "the next page is too large to hold: even its newest entry passed the 16 MiB budget"}
 			}
-			return olderBatch{gen: gen, err: sanitizeText(wrapExec(err).Error())}
+			return olderBatch{gen: gen, atEnd: true, lines: warningLines(res.warnings)}
 		}
-
-		var newestFirst []logLine
-		for _, raw := range strings.Split(string(out), "\n") {
-			if strings.TrimSpace(raw) == "" {
-				continue
+		// Paging anchors on the oldest retained cursor; a page of nothing
+		// but placeholders has none, and refetching it would never advance.
+		usable := false
+		for _, l := range kept {
+			if l.cursor != "" {
+				usable = true
+				break
 			}
-			if l, ok := parseJournalJSON([]byte(raw)); ok && !l.meta {
-				newestFirst = append(newestFirst, l)
-			}
 		}
-		// The first entry is the anchor we already have.
-		if len(newestFirst) > 0 && newestFirst[0].cursor == cursor {
-			newestFirst = newestFirst[1:]
+		if !usable {
+			return olderBatch{gen: gen, atEnd: true, lines: warningLines(res.warnings),
+				err: "cannot page further back: every entry here is too large to anchor the next page on"}
 		}
-		if len(newestFirst) == 0 {
-			return olderBatch{gen: gen, atEnd: true}
+		lines := chronological(kept)
+		// Complete only if the budget held AND the journal ran dry: fewer
+		// records after the anchor than asked for.
+		atEnd := !res.truncated && res.records-1 < n
+		if res.truncated {
+			lines = append([]logLine{truncationNotice(lines[0].ts, "page")}, lines...)
 		}
-		lines := make([]logLine, len(newestFirst))
-		for i, l := range newestFirst {
-			lines[len(newestFirst)-1-i] = l
-		}
-		return olderBatch{gen: gen, lines: lines, atEnd: len(lines) < n}
+		lines = append(lines, warningLines(res.warnings)...)
+		return olderBatch{gen: gen, lines: lines, atEnd: atEnd}
 	}
 }
 
@@ -243,6 +262,13 @@ func startJournal(parent context.Context, r runner, unit string, f logFilter, ba
 		defer close(js.done) // deferred first, so it runs last — after close(ch)
 		defer close(ch)
 		send := func(b journalBatch) bool {
+			// The pre-check makes suppression firm for any send STARTED after
+			// cancellation. One already inside the select when cancel lands
+			// may still deliver — Go picks freely among ready cases — which
+			// is why stale batches are generation-checked by the consumer.
+			if ctx.Err() != nil {
+				return false
+			}
 			select {
 			case ch <- b:
 				return true
@@ -316,40 +342,307 @@ func followArgs(unit string, f logFilter, after string, since time.Time) []strin
 	return append(args, f.args()...)
 }
 
-// noMatches reports the one failure that is not one: journalctl exits 1 when a
-// `-g` pattern matches nothing, and says nothing on stderr about it. Reported
-// as an error it becomes a red line in the pane claiming the journal could not
-// be read, which is both alarming and wrong — the search simply found nothing.
-// A real failure, permissions being the usual one, exits with something to say.
-func noMatches(err error) bool {
-	var ee *exec.ExitError
-	return errors.As(err, &ee) && ee.ExitCode() == 1 && len(bytes.TrimSpace(ee.Stderr)) == 0
+// ---------- bounded finite reads ----------
+
+// maxPageBytes bounds what one finite read RETAINS. The per-entry cap alone
+// still allowed count×4MiB in flight: a backlog of hundreds of near-limit
+// entries was parsed whole before the first line reached the pane.
+const maxPageBytes = 16 << 20
+
+// The stderr transcript'"'"'s lifetime caps — bytes and lines both, because ten
+// thousand short lines are as useless on screen as one enormous one.
+const (
+	maxStderrBytes = 64 << 10
+	maxStderrLines = 128
+)
+
+// stderrPump drains a command'"'"'s stderr for as long as the process lives,
+// keeping a bounded transcript. Past its caps it reads on and discards — the
+// child must never block on a full pipe — and notify is poked without ever
+// blocking, so a live consumer can surface warnings while the process still
+// runs. take hands over what has accumulated.
+type stderrPump struct {
+	notify chan struct{}
+	done   chan struct{}
+
+	mu         sync.Mutex
+	kept       []string
+	bytes      int  // lifetime SANITIZED bytes, not per-take: controls expand
+	count      int  // lifetime line count; take() clears kept
+	text       bool // nonblank stderr was seen — retained, clipped, or not
+	suppressed bool // a cap was hit or a line was clipped; one marker says so
+	marked     bool // ...and has been handed out
 }
 
-// readBacklog fetches the newest `n` matching entries, oldest first.
-func readBacklog(ctx context.Context, r runner, unit string, f logFilter, n int) ([]logLine, error) {
-	out, err := r.command(ctx, "journalctl", backlogArgs(unit, f, n)...).Output()
-	if err != nil {
-		if noMatches(err) {
-			return nil, nil
+// readShortLine reads one line keeping at most 4 KiB of it: stderr is
+// diagnostics, not payload, and a pathological line must not cost the 4 MiB
+// a journal record is allowed.
+// clipped says the keep ran out — the caller owes the reader the one
+// truncation marker for it — and nonblank reports whether ANY byte of the
+// line, kept or discarded, was more than whitespace: the no-matches
+// classifier needs the truth about the whole line, not about the prefix
+// that happened to fit.
+func readShortLine(br *bufio.Reader) (line []byte, clipped, nonblank bool, err error) {
+	const keep = 4 << 10
+	for {
+		chunk, more, rerr := br.ReadLine()
+		// The blank test runs over kept and discarded bytes alike, per
+		// ReadLine chunk: bytes.TrimSpace knows Unicode whitespace within a
+		// chunk, so CR-only or NBSP diagnostics stay blank — with one
+		// accepted gap: a multibyte space split across the 8 KiB read
+		// boundary reads as text. Erring toward "journalctl spoke" only
+		// costs a real error message instead of a silent no-match.
+		if !nonblank && len(bytes.TrimSpace(chunk)) > 0 {
+			nonblank = true
 		}
-		return nil, wrapExec(err)
-	}
-
-	var newestFirst []logLine
-	for _, raw := range strings.Split(string(out), "\n") {
-		if strings.TrimSpace(raw) == "" {
+		if len(chunk) > 0 {
+			if len(line) < keep {
+				if len(line)+len(chunk) > keep {
+					chunk = chunk[:keep-len(line)]
+					clipped = true
+				}
+				line = append(line, chunk...)
+			} else {
+				clipped = true
+			}
+		}
+		if more && rerr == nil {
 			continue
 		}
-		if l, ok := parseJournalJSON([]byte(raw)); ok {
-			newestFirst = append(newestFirst, l)
+		return line, clipped, nonblank, rerr
+	}
+}
+
+func pumpStderr(rc io.Reader) *stderrPump {
+	p := &stderrPump{notify: make(chan struct{}, 1), done: make(chan struct{})}
+	go func() {
+		defer close(p.done)
+		br := bufio.NewReaderSize(rc, 8*1024)
+		for {
+			line, clipped, nonblank, err := readShortLine(br)
+			if s := strings.TrimSpace(string(line)); s != "" || nonblank {
+				clean := sanitizeText(s)
+				p.mu.Lock()
+				if nonblank {
+					p.text = true
+				}
+				news := false
+				if p.suppressed || clipped || p.count >= maxStderrLines || p.bytes+len(clean) > maxStderrBytes {
+					news = !p.suppressed // the marker itself, exactly once
+					p.suppressed = true
+					if clipped && clean != "" && p.count < maxStderrLines && p.bytes+len(clean) <= maxStderrBytes {
+						// The clipped prefix is still worth showing, once.
+						p.kept = append(p.kept, clean)
+						p.bytes += len(clean)
+						p.count++
+						news = true
+					}
+				} else if clean != "" {
+					p.kept = append(p.kept, clean)
+					p.bytes += len(clean)
+					p.count++
+					news = true
+				}
+				p.mu.Unlock()
+				if news {
+					// Only when take() gained something: a flood past the caps
+					// must not keep the consumer's select loop hot for lines
+					// that will never surface.
+					select {
+					case p.notify <- struct{}{}:
+					default:
+					}
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return p
+}
+
+// sawText reports whether stderr ever carried more than whitespace —
+// retained, clipped, or discarded. The no-matches classifier keys on this,
+// never on the warnings slice, which stdout notices also feed.
+func (p *stderrPump) sawText() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.text
+}
+
+// take returns the warnings accumulated since the last call, plus the
+// one-time suppression marker once the caps have been passed.
+func (p *stderrPump) take() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := p.kept
+	p.kept = nil
+	if p.suppressed && !p.marked {
+		p.marked = true
+		out = append(out, "further journalctl diagnostics suppressed")
+	}
+	return out
+}
+
+// finiteRead is what one bounded, streamed journalctl run produced.
+type finiteRead struct {
+	newestFirst []logLine // the contiguous newest records that fit
+	records     int       // records in the output, retained or drained
+	truncated   bool      // output continued past the page budget
+	warnings    []string  // bounded, sanitized stderr and stray notices
+	err         error     // the command failed; warnings still stand
+}
+
+// errText is the display form of a failure: the exit status plus the first
+// captured diagnostic — what ExitError.Stderr used to carry before the pipes
+// became ours.
+func (fr finiteRead) errText() string {
+	msg := fr.err.Error()
+	if len(fr.warnings) > 0 {
+		msg += ": " + fr.warnings[0]
+	}
+	return sanitizeText(msg)
+}
+
+// runFinite executes one finite journalctl and streams its newest-first
+// output: records are retained until `keep` are held or the page budget is
+// spent, and everything older is read on and DISCARDED through EOF — peak
+// memory is the budget plus one bounded entry, not count×cap, and the child
+// is never left blocked on a full pipe. Stderr is pumped concurrently under
+// its own caps. The command is reaped before returning.
+//
+// journalctl'"'"'s one non-failure failure is classified here, from the captured
+// result: exit status 1 with nothing on stderr and no output records is a -g
+// that matched nothing. It used to be read out of ExitError.Stderr, which a
+// custom pipe leaves permanently empty.
+func runFinite(ctx context.Context, r runner, args []string, keep int) finiteRead {
+	var res finiteRead
+	cmd := r.command(ctx, "journalctl", args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		res.err = err
+		return res
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		res.err = err
+		return res
+	}
+	if err := cmd.Start(); err != nil {
+		res.err = err
+		return res
+	}
+	pump := pumpStderr(stderr)
+
+	keptBytes, noticeBytes := 0, 0
+	sawNotice := false
+	var readErr error
+	br := bufio.NewReaderSize(stdout, 64*1024)
+	for {
+		raw, err := readEntryLine(br)
+		if len(raw) > 0 {
+			if l, ok := parseJournalJSON(raw); ok {
+				switch {
+				case l.meta:
+					// A stray plain-text notice, not a record. It rides with the
+					// warnings — under the same lifetime budget, or a flood of
+					// near-cap notices rebuilds the memory problem sideways —
+					// and it counts as output: exit 1 with ANY nonblank stdout
+					// is a real failure, not a -g that matched nothing.
+					sawNotice = true
+					if len(res.warnings) < maxStderrLines && noticeBytes+len(l.msg) <= maxStderrBytes {
+						res.warnings = append(res.warnings, l.msg)
+						noticeBytes += len(l.msg)
+					}
+				case res.truncated, len(res.newestFirst) >= keep,
+					keptBytes+len(raw) > maxPageBytes:
+					// Latched: once anything is discarded, everything older is
+					// too, or the page would stop being the contiguous newest.
+					res.records++
+					res.truncated = true
+				default:
+					res.records++
+					res.newestFirst = append(res.newestFirst, l)
+					keptBytes += len(raw)
+				}
+			}
+		}
+		if err != nil {
+			if err != io.EOF {
+				readErr = err
+			}
+			break
 		}
 	}
+	<-pump.done
+	werr := cmd.Wait()
+	if werr == nil && readErr != nil {
+		// The exit status says fine, but the output was not fully readable.
+		werr = readErr
+	}
+	res.warnings = append(pump.take(), res.warnings...)
+	if werr != nil {
+		// exit 1 counts as "no matches" only when journalctl said NOTHING:
+		// no records, no stdout notice, and no nonblank stderr anywhere in
+		// the drained stream — clipped and discarded bytes included.
+		var ee *exec.ExitError
+		noMatches := errors.As(werr, &ee) && ee.ExitCode() == 1 &&
+			!pump.sawText() && res.records == 0 && !sawNotice
+		if !noMatches {
+			res.err = werr
+		}
+	}
+	return res
+}
+
+// chronological flips a newest-first page into prepend/display order.
+func chronological(newestFirst []logLine) []logLine {
 	lines := make([]logLine, len(newestFirst))
 	for i, l := range newestFirst {
 		lines[len(newestFirst)-1-i] = l
 	}
-	return lines, nil
+	return lines
+}
+
+// truncationNotice is the honest boundary of a page that hit its budget: the
+// lines above it were not fetched, and it carries no cursor, so paging picks
+// its anchor from the oldest RETAINED record below.
+func truncationNotice(oldest time.Time, what string) logLine {
+	if oldest.IsZero() {
+		oldest = time.Now()
+	}
+	return logLine{ts: oldest, prio: 4, meta: true,
+		msg: "older entries not held: this " + what + " hit its 16 MiB budget; scroll on to fetch them"}
+}
+
+// warningLines turns captured diagnostics into meta lines for the pane.
+func warningLines(ws []string) []logLine {
+	out := make([]logLine, 0, len(ws))
+	for _, w := range ws {
+		out = append(out, logLine{ts: time.Now(), prio: 4, msg: w, meta: true})
+	}
+	return out
+}
+
+// readBacklog fetches the newest `n` matching entries, oldest first, under
+// the page budget; a truncated read is a partial success with the boundary
+// said out loud, and stderr warnings from a SUCCESSFUL read surface as meta
+// lines instead of vanishing with the exit status.
+func readBacklog(ctx context.Context, r runner, unit string, f logFilter, n int) ([]logLine, error) {
+	res := runFinite(ctx, r, backlogArgs(unit, f, n), n)
+	if res.err != nil {
+		return nil, errors.New(res.errText())
+	}
+	lines := chronological(res.newestFirst)
+	if res.truncated {
+		var oldest time.Time
+		if len(lines) > 0 {
+			oldest = lines[0].ts
+		}
+		lines = append([]logLine{truncationNotice(oldest, "backlog")}, lines...)
+	}
+	return append(lines, warningLines(res.warnings)...), nil
 }
 
 // followJournal tails the unit, picking up where the backlog left off.
@@ -368,22 +661,16 @@ func followJournal(ctx context.Context, r runner, unit string, f logFilter,
 		fail("cannot open journalctl stdout: " + err.Error())
 		return
 	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		fail("cannot open journalctl stderr: " + err.Error())
+		return
+	}
 	if err := cmd.Start(); err != nil {
 		fail("cannot run journalctl: " + err.Error())
 		return
 	}
-	// CommandContext kills the child when ctx is cancelled, but it does not reap
-	// it; only Wait does. A selection or filter change cancels this stream, so
-	// always wait before returning instead of accumulating dead journalctl (or
-	// ssh) children while the user navigates between units.
-	waited := false
-	defer func() {
-		if !waited {
-			_ = cmd.Wait()
-		}
-	}()
+	pump := pumpStderr(stderrPipe)
 
 	// Read on its own goroutine so the sender can be woken by a clock as well
 	// as by a line. Gating the flush on the consumer instead — "send when the
@@ -411,8 +698,44 @@ func followJournal(ctx context.Context, r runner, unit string, f logFilter,
 		}
 	}()
 
+	// reap joins both pipe readers and waits the child, once. Every way out
+	// of this function runs it: CommandContext kills on cancellation, but
+	// only Wait reaps, and the pipes must reach EOF before Wait is safe. On
+	// cancellation nothing more is sent to the UI, but the draining and the
+	// reaping still happen in full.
+	reaped := false
+	var exitErr error
+	reap := func() {
+		if reaped {
+			return
+		}
+		reaped = true
+		for range lines {
+		}
+		<-pump.done
+		exitErr = cmd.Wait()
+	}
+	defer reap()
+
+	// warn surfaces captured diagnostics while the process is still running:
+	// a permissions warning printed once by a live -f used to sit invisible
+	// in a buffer until the stream died, which on a healthy unit is never.
+	warn := func() bool {
+		if ctx.Err() != nil {
+			return false // cancelled: a ready buffered case must not enqueue UI work
+		}
+		ws := pump.take()
+		if len(ws) == 0 {
+			return true
+		}
+		return send(journalBatch{gen: gen, lines: warningLines(ws)})
+	}
+
 	pending := make([]logLine, 0, 64)
 	flush := func() bool {
+		if ctx.Err() != nil {
+			return false // as above: cancellation outranks a ready buffer
+		}
 		if len(pending) == 0 {
 			return true
 		}
@@ -440,6 +763,10 @@ reading:
 					return
 				}
 			}
+		case <-pump.notify:
+			if !warn() {
+				return
+			}
 		case <-tick.C:
 			if !flush() {
 				return
@@ -449,14 +776,38 @@ reading:
 		}
 	}
 	flush()
-	_ = cmd.Wait()
-	waited = true
-	msg := sanitizeText(strings.TrimSpace(stderr.String()))
-	if msg == "" {
-		msg = "journal stream ended"
+
+	// stdout has closed, but the process may still be alive and still
+	// warning on stderr; keep surfacing until the pump finishes too.
+stderrTail:
+	for {
+		select {
+		case <-pump.notify:
+			if !warn() {
+				return
+			}
+		case <-pump.done:
+			break stderrTail
+		case <-ctx.Done():
+			return
+		}
 	}
-	send(journalBatch{gen: gen, done: true, backlogDone: true, lines: []logLine{
-		{ts: time.Now(), prio: 4, msg: msg, meta: true}}})
+	reap()
+	if ctx.Err() != nil {
+		return // cancelled while the pump wound down; send nothing more
+	}
+	final := pump.take()
+	if len(final) == 0 {
+		msg := "journal stream ended"
+		if exitErr != nil {
+			// A nonzero exit with nothing on stderr would otherwise vanish
+			// into the generic sign-off.
+			msg += ": " + exitErr.Error()
+		}
+		final = []string{sanitizeText(msg)}
+	}
+	send(journalBatch{gen: gen, done: true, backlogDone: true,
+		lines: warningLines(final)})
 }
 
 type rawEntry struct {

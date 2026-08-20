@@ -23,6 +23,7 @@
 - [Rendering bugs hide in sizes nobody tests](feedback_layout_invariant.md) — one over-wide line spoils the whole screen; the matrix that found six, and why to re-run it with the backstop off
 - [Sanitize at ingress, never at render](project_sanitize_at_ingress.md) — the render layer assumes it; new inputs join the ingress list; raw -H lives only in the transport
 - [Every exit stopAndWaits the journal children](project_journal_ownership_on_exit.md) — cancel only asks; bubbletea eats interrupts, defer evaluates a nil receiver, os.Exit runs no defers
+- [Own the pipes, own everything Output() gave for free](project_own_pipes_own_everything.md) — classification from captured results, Wait after reader joins, drain past every cap, latch the retention
 - [`-H` needs no second machine](feedback_verify_remote_with_local_sshd.md) — `docs/helpers/local-sshd.sh`; it settled a wrong report about ssh's `--` that reading could not
 - [Go + nix loop: vendor, git add, then build](feedback_go_nix_workflow.md) — `nix build` also runs the tests, in a sandbox with no systemd/network
 - [runtimeInputs must cover every command — hostname is not in coreutils](project_runtimeinputs_coverage.md) — gaps hide behind ambient PATH and only die in minimal environments; prefer `uname -n`

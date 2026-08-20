@@ -10,6 +10,20 @@ to change.
 
 ### Fixed
 
+- **Reading a journal no longer gambles memory on its contents.** The backlog
+  and every backwards page were parsed whole before the first line reached
+  the pane — hundreds of near-limit entries at once. They stream now: the
+  newest 16 MiB are kept contiguously, the boundary is announced in the
+  pane, everything older is drained so journalctl can finish, and paging
+  carries the field allowlist the backlog always had. An entry past 4 MiB
+  becomes a placeholder without taking its page with it, and a page with
+  nothing to anchor on says so once instead of refetching forever.
+- **journalctl's warnings reach the pane — from a live follow too.** stderr
+  used to be discarded on successful finite reads and held until death on
+  -f. It is pumped concurrently now, bounded by bytes and lines with one
+  suppression marker, surfaced while the process runs, and a silent nonzero
+  exit is named instead of hiding behind "journal stream ended". A -g that
+  matches nothing is still silence, not an error.
 - **Pasting into a filter cannot repaint the screen.** A bracketed paste is
   one event carrying whatever was on the clipboard — newlines, control
   bytes, whole escape sequences — and the editors appended it raw, where the
