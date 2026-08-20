@@ -21,9 +21,9 @@ to change.
 - **Colour is back everywhere it costs nothing to read.** The filter is yellow
   and bold again; the focused pane frame, the menu box, the spinners and the
   editor caret are magenta again; the rules and the unfocused frame are grey
-  again. What stays colourless is what you have to read — headings, the host
-  name, column titles, labels, timestamps, idle values, unit names and log
-  lines — because those are the ones a theme can render unreadably.
+  again. What stays colourless is what you have to read — headings, column
+  titles, labels, timestamps, idle values, unit names and log lines — because
+  those are the ones a theme can render unreadably.
 
 ### Fixed
 

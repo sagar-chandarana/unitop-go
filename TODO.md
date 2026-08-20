@@ -889,6 +889,53 @@ ack → commit loop.
   and sent WheelDown (clamps to zero, proving nothing) — now seeds scrollback
   and WheelUps so the offset provably moves. Committed the four held paths.
 
+#### [x] UT-041 — Colour the sort direction only where it means high/low; reconcile the host-name docs
+
+- **Status:** Accepted — implemented in two commits (per the maintainer:
+  sort-direction fix, then host-name doc reconciliation)
+- **Source:** Codex audit of the maintainer's `e05fe64` landing; maintainer
+  authorized the fix (full-fix option, 2026-08-20 UTC). `e05fe64` stays
+  immutable.
+- **Finding A — sort-direction colour lies on three columns.**
+  `sortStyle(reverse)` (theme.go) hardcoded reverse=false → red "high to low",
+  true → green "low to high". But the natural (unreversed) order per key
+  (sort.go): name = A→Z (low→high); state = most-alarming-first by attention
+  rank (not a magnitude); uptime = `ActiveSince.Unix()` high→low = newest start
+  = **shortest displayed age first** (low→high as displayed, inverted from the
+  key). Only cpu/mem/net/io/restarts/tasks are truly high→low. So red/green was
+  false on name, state, and uptime.
+  - **Resolution:** `sortStyle(key, reverse)` is now key-aware. Magnitude
+    columns keep red=high→low / green=low→high. Uptime is coloured by displayed
+    age (unreversed newest-first = shortest age = green; reversed = red). Name
+    and state are neutral — `stSortNeutral` (bold, no hue) so the sorted column
+    still carries weight while the arrow alone says direction. Both render sites
+    (header `sort` chip view.go:592, table title view.go:792) share the one
+    helper.
+- **Finding B — host-name docs contradict the code.** Ground truth: `stHost =
+  Foreground(colCyan).Bold(true)` (theme.go), rendered `stHost.Render(hostLabel)`
+  (view.go) — the host name **is** cyan. theme.go duplicated the "host name is
+  cyan" paragraph and also listed the host name among the colourless
+  "what must be read"; CHANGELOG's colourless list did the same.
+  - **Resolution:** de-duplicate the theme.go paragraph and drop the host name
+    from the colourless lists in theme.go and CHANGELOG. The "host name is cyan"
+    statements are the correct ones and stay.
+- **Regression coverage:** `src/theme_test.go` TestSortStyleShowsDirection now
+  covers metric columns (red/green by reverse), uptime (green unreversed, red
+  reversed — the inversion), and name/state (never red/green, always bold),
+  across both reverse values.
+- **Gates (explicit exit codes):** gofmt clean; `go vet` 0; full `go test` 0;
+  `go test -race` 0; `nix build` 0.
+- **Review outcome:** Accepted and implemented (triage/review Codex/GPT-5,
+  implementation Claude Code/Opus 4.8, 2026-08-20). Codex accepted the
+  production mapping, both call sites and the prose corrections; two pre-commit
+  fixes applied — the neutral regression now asserts foreground is exactly
+  `lipgloss.NoColor{}` (not merely "not red/green"), and the magnitude table
+  enumerates all eight keys. Landed as two commits per the maintainer:
+  `2744b5ef50fb1f7f287db3da901e80ea7627d9b0` "Colour the sort direction only
+  where it means high to low" (sort code + view + test + sort CHANGELOG bullet),
+  then this commit for the host-name doc reconciliation (theme.go paragraph
+  dedup + colourless-list correction, CHANGELOG colourless line, this record).
+
 ## Review process
 
 For each item, replace `_Pending._` with one of:

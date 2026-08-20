@@ -20,19 +20,15 @@ import "github.com/charmbracelet/lipgloss"
 // worth the risk that a theme renders cyan weakly. Every other heading is
 // colourless.
 //
-// The host name is cyan: it is the one heading that answers "which machine am
-// I looking at", it is short, bold, and always in the same corner, so the hue
-// is worth what a weak cyan costs. Every other heading is colourless.
-//
 // Two more are decoration only, never text: magenta draws the focused frame,
 // the menu box, the spinners and the editor caret, and colour 8 draws the
 // rules and the unfocused frame. Both may be nearly invisible on some theme
 // and nothing is lost when they are — a frame is also a heavier glyph than
 // the unfocused one, and the sort arrow says the direction the colour shows.
 //
-// What must be read — headings, the host name, column titles, labels,
-// timestamps, idle values, unit and slice names, log lines — is the
-// terminal's own foreground: bold for emphasis, faint for below notice.
+// What must be read — headings, column titles, labels, timestamps, idle
+// values, unit and slice names, log lines — is the terminal's own foreground:
+// bold for emphasis, faint for below notice.
 // That is not a stylistic preference, it is the only thing that survives an
 // arbitrary theme. Measured across two real ones:
 //
