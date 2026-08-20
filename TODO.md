@@ -741,9 +741,9 @@ not silently recycled:
   max-size entry is not re-wrapped every frame.
 - **Review outcome:** _Pending._
 
-#### [ ] UT-034 — Bound poll and action command output by bytes
+#### [x] UT-034 — Bound poll and action command output by bytes
 
-- **Status:** Pending review
+- **Status:** Accepted — implemented
 - **Confidence:** High
 - **Evidence:** Every poll/action path buffers the child's whole stdout with
   no byte cap via `Cmd.Output()` / `CombinedOutput()`:
@@ -766,7 +766,7 @@ not silently recycled:
   stdout and stderr independently at cap-1/cap/cap+1; endless finite-rate
   flood until cancellation; child cannot block on a full pipe; PID gone when
   the command returns; explicit error surfaced. No real-GB fixtures.
-- **Review outcome:** _Pending._
+- **Review outcome:** Accepted and implemented (Claude Code/Fable 5, 2026-08-20; commit "Bound the bytes a poll or action command can return"). New boundedRun primitive (src/boundedrun.go): streams stdout to a 1 MiB cap (maxCmdOutput), drains everything past it so the child never blocks, pumps stderr through the existing stderrPump caps, and always waits/reaps; a non-EOF stdout read error is retained and folded into the result so a partial reply cannot parse as a whole one; an over-cap reply is errOversized (a plain retryable error, not UnsupportedError), and a nonzero exit folds the pumped stderr into the error since a pipe leaves ExitError.Stderr empty. wrapExec removed — boundedRun subsumes it. Wired at every unbounded site: systemctl show/version/list-units and the remote sh -c framed poll (collect.go), the remote date +%s clock probe (journal.go), and the action CombinedOutput (actions.go, stdout+stderr both feed the sanitized toast). Timeouts unchanged (the deadline gap is UT-035). Regressions (src/boundedrun_test.go, all -race, no GB fixtures): TestBoundedRunStdoutCapBoundary (cap-1/cap/cap+1, exact retained length, errOversized at +1), TestBoundedRunStderrIsBoundedNotFatal (flood bounded + marker, stdout survives, exit 0 not an error), TestBoundedRunDrainsSoChildNeverBlocks (8 MiB flood then a sentinel the child only reaches if drained; PID ESRCH by return), TestBoundedRunCancellationReaps (endless flood returns promptly on cancel, child reaped), TestBoundedRunFoldsStderrOnFailure, TestOversizedPollSurfacesAnError (local + fake-ssh remote poll flood → error not zero-unit parse), and TestOversizedShowAndActionSurfaceErrors (the detailed `systemctl show` batch via Poll surfaces a "systemctl show" error, and a flooding unit action returns errOversized in its actionResult — not a truncated success).
 
 ### P2 — hardening / reliability
 

@@ -294,9 +294,9 @@ func startJournal(parent context.Context, r runner, unit string, f logFilter, ba
 		// stream failure, and the retirement path recovers it like any other.
 		since := time.Now()
 		if r.host != "" {
-			out, err := r.command(ctx, "date", "+%s").Output()
+			out, _, err := boundedRun(r.command(ctx, "date", "+%s"))
 			if err != nil {
-				meta("remote clock probe: " + wrapExec(err).Error())
+				meta("remote clock probe: " + err.Error())
 				return
 			}
 			remoteNow, perr := parseEpochLine(string(out))

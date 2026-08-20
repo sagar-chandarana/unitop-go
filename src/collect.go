@@ -222,9 +222,9 @@ func (c *Collector) Poll(ctx context.Context) ([]Unit, HostStats, error) {
 	for i := 0; i < len(names); i += batch {
 		end := min(i+batch, len(names))
 		args := append([]string{"show", "--timestamp=unix", "--property=" + showProperties}, names[i:end]...)
-		out, err := c.r.command(ctx, "systemctl", args...).Output()
+		out, _, err := boundedRun(c.r.command(ctx, "systemctl", args...))
 		if err != nil {
-			return nil, host, fmt.Errorf("systemctl show: %w", wrapExec(err))
+			return nil, host, fmt.Errorf("systemctl show: %w", err)
 		}
 		units = append(units, parseShow(string(out))...)
 	}
@@ -348,13 +348,13 @@ const (
 func (c *Collector) pollBase(ctx context.Context) (map[string]string, []string, error) {
 	if c.r.host == "" {
 		if c.version == 0 {
-			out, err := c.r.command(ctx, "systemctl", "--version").Output()
+			out, _, err := boundedRun(c.r.command(ctx, "systemctl", "--version"))
 			if err != nil {
 				// A probe that could not run is not a verdict about the
 				// host's systemd — it is an ordinary, retryable failure.
 				// Discarding it here turned "systemctl missing from PATH"
 				// into a fatal "no systemd" that stopped polling for good.
-				return nil, nil, fmt.Errorf("systemctl --version: %w", wrapExec(err))
+				return nil, nil, fmt.Errorf("systemctl --version: %w", err)
 			}
 			// Validate before caching: only a version that passes is kept.
 			// Caching a rejected one made the explicit-retry gestures
@@ -367,9 +367,9 @@ func (c *Collector) pollBase(ctx context.Context) (map[string]string, []string, 
 			c.version = v
 		}
 		proc := readProcLocal()
-		out, err := c.r.command(ctx, "systemctl", listUnitsArgs...).Output()
+		out, _, err := boundedRun(c.r.command(ctx, "systemctl", listUnitsArgs...))
 		if err != nil {
-			return proc, nil, fmt.Errorf("systemctl list-units: %w", wrapExec(err))
+			return proc, nil, fmt.Errorf("systemctl list-units: %w", err)
 		}
 		return proc, parseUnitList(string(out)), nil
 	}
@@ -392,9 +392,9 @@ func (c *Collector) pollBase(ctx context.Context) (map[string]string, []string, 
 	// one-way outbound latency plus the floor-second — ages overstate by at
 	// most that, never by a loaded host's whole poll.
 	launched := time.Now().Round(0)
-	out, err := c.r.command(ctx, "sh", "-c", script).Output()
+	out, _, err := boundedRun(c.r.command(ctx, "sh", "-c", script))
 	if err != nil {
-		return nil, nil, fmt.Errorf("remote poll: %w", wrapExec(err))
+		return nil, nil, fmt.Errorf("remote poll: %w", err)
 	}
 	clock, ver, proc, units, perr := parseRemotePoll(string(out))
 	if perr != nil {
@@ -627,20 +627,6 @@ func parseUnixTS(v string) time.Time {
 		return time.Time{}
 	}
 	return time.Unix(n, 0)
-}
-
-// wrapExec surfaces the stderr of a failed command, which is the only place
-// systemctl/ssh explain themselves.
-func wrapExec(err error) error {
-	var ee *exec.ExitError
-	if errors.As(err, &ee) && len(ee.Stderr) > 0 {
-		msg := strings.TrimSpace(string(ee.Stderr))
-		if i := strings.IndexByte(msg, '\n'); i > 0 {
-			msg = msg[:i]
-		}
-		return fmt.Errorf("%v: %s", err, msg)
-	}
-	return err
 }
 
 // normalizeClocks shifts the remote's realtime unit stamps into the client's

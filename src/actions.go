@@ -66,11 +66,20 @@ func (m *model) runAction(unit string, a action) tea.Cmd {
 		defer cancel()
 
 		name, args := actionCommand(a, unit, useSudo)
-		out, err := r.command(ctx, name, args...).CombinedOutput()
-		// systemctl's output ends up in the toast; it is the far end's, so it
-		// goes through sanitize like everything else from there.
+		// boundedRun, not CombinedOutput: a hostile far end could otherwise
+		// flood the action reply and OOM us. stdout and the pumped stderr
+		// both feed the toast — it is the far end's text, so it goes through
+		// sanitize like everything else from there.
+		out, serr, err := boundedRun(r.command(ctx, name, args...))
+		toast := strings.TrimSpace(string(out))
+		if serr != "" {
+			if toast != "" {
+				toast += "\n"
+			}
+			toast += serr
+		}
 		return actionResult{unit: unit, label: a.label, err: err,
-			out: sanitizeText(strings.TrimSpace(string(out)))}
+			out: sanitizeText(toast)}
 	}
 }
 

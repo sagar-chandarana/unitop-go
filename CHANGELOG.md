@@ -10,6 +10,14 @@ to change.
 
 ### Fixed
 
+- **A hostile host cannot OOM the client by flooding a poll or action.**
+  Every systemctl/ssh/date command buffered its whole stdout in memory
+  (Cmd.Output/CombinedOutput); a compromised or broken monitored host could
+  answer a poll or a unit action with an unbounded stream and exhaust
+  memory — the timeout bounded how long, not how much. Command output is
+  read to a 1 MiB cap now, with everything past it drained (so the child
+  never wedges) and an oversized reply surfaced as a retryable error rather
+  than a mis-parse.
 - **A hostile monitored host can no longer crash the UI with a whitespace
   `TriggeredBy`.** The "triggered by" line indexed the first word of that
   field, guarded only against an empty string — but a value of only
