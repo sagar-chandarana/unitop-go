@@ -170,6 +170,7 @@ type model struct {
 	logBacklogDone bool
 	logAtStart     bool      // the journal has nothing older than what we hold
 	logFilt        logFilter // applied by journalctl, so it searches the whole log
+	logDraft       string    // the log filter's grep while it is being typed; applied to logFilt only on Enter
 	filterLogs     bool      // the filter editor is aimed at the log, not the table
 	logLoadErr     string    // why the last page failed, if it did
 	logWrap        bool
@@ -451,13 +452,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.gen != m.journalSettleGen {
 			return m, nil
 		}
-		// While the log filter is being typed, the editor owns journal syncing
-		// and defers it to Enter/Esc; a settle firing now would restart
-		// journalctl with the half-typed filter. The editor's close-sync picks
-		// up the current selection and the finished filter together.
-		if m.filterInput && m.filterLogs {
-			return m, nil
-		}
+		// No log-filter special case needed: the applied filter (m.logFilt) is
+		// never a draft, so a settle during editing reconciles to the same unit
+		// and the same applied filter and is a no-op. syncJournal short-circuits.
 		return m, m.syncJournal()
 
 	case tea.MouseMsg:
@@ -553,18 +550,26 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// being typed into.
 		text := &m.filter
 		if m.filterLogs {
-			text = &m.logFilt.grep
+			// The log filter edits a draft, never the applied m.logFilt: every
+			// journal path reads the applied filter, so a half-typed grep must
+			// not be visible to paging, polls, resize or the settle.
+			text = &m.logDraft
 		}
 		switch msg.Type {
 		case tea.KeyEnter:
 			m.filterInput = false
+			if m.filterLogs {
+				m.logFilt.grep = m.logDraft // apply the draft, once, on commit
+			}
 		case tea.KeyEsc:
 			// Cancel, not clear. Amending an applied filter and thinking
 			// better of it used to throw the filter away rather than put it
 			// back. Escaping again clears it, which is the next thing on the
-			// stack.
+			// stack. The log draft is discarded; m.logFilt was never touched.
 			m.filterInput = false
-			*text = m.filterWas
+			if !m.filterLogs {
+				*text = m.filterWas
+			}
 		case tea.KeyBackspace:
 			if r := []rune(*text); len(r) > 0 {
 				*text = string(r[:len(r)-1])
@@ -587,8 +592,9 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.filterLogs {
-			// Re-running journalctl per keystroke would spawn a process per
-			// character; wait for Enter or Esc to settle.
+			// The applied filter only changes when the editor closes, so
+			// journalctl reruns once on Enter/Esc, never per keystroke. While
+			// typing, m.logFilt is unchanged and no journal work runs.
 			if !m.filterInput {
 				return m, m.syncJournal()
 			}
@@ -627,6 +633,7 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filterLogs = m.logHasFocus()
 		m.filterWas = m.filter
 		if m.filterLogs {
+			m.logDraft = m.logFilt.grep // seed the draft from the applied filter; applied stays put until Enter
 			m.filterWas = m.logFilt.grep
 		}
 		m.filterInput = true
@@ -916,7 +923,10 @@ func (m *model) loadOlder() tea.Cmd {
 	// holding a journalctl open, and a remote one at the far end of the ssh
 	// connection, for an answer that would be thrown away on arrival.
 	return tea.Batch(
-		fetchOlder(m.journal, m.r, m.journal.unit, oldest, m.logFilt, journalBacklog, m.logGen),
+		// Page on the stream's own applied filter, never m.logFilt: while the
+		// log filter is being edited the applied filter is what owns the retained
+		// buffer, and the draft must not fetch a mismatched page.
+		fetchOlder(m.journal, m.r, m.journal.unit, oldest, m.journal.filter, journalBacklog, m.logGen),
 		spinnerTickCmd(),
 	)
 }

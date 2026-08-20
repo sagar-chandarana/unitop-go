@@ -1613,7 +1613,9 @@ func (m model) viewFooter() string {
 		// last thing to go.
 		long, short, text := "show units whose name or description contains", "filter units:", m.filter
 		if m.filterLogs {
-			long, short, text = "show journal lines matching", "search log:", m.logFilt.grep
+			// The footer shows the draft being typed; the pane title keeps naming
+			// the applied filter until Enter commits this.
+			long, short, text = "show journal lines matching", "search log:", m.logDraft
 		}
 		caret := stFrame.Render("▏")
 		typed := stFilter.Render(text)

@@ -27,6 +27,12 @@ to change.
 
 ### Fixed
 
+- **Editing a log filter no longer disturbs the log you're reading.** While you
+  typed a search, a poll, a resize, or paging further back could rerun
+  `journalctl` with the half-typed text, and the pane title could name a filter
+  that wasn't in force yet. The search now takes effect only when you press
+  Enter; until then the log keeps showing — and paging keeps fetching — what is
+  actually applied.
 - **Scrolling the unit list with the mouse wheel no longer makes the log pane
   thrash.** A quick scroll used to restart `journalctl` on every notch, for
   each unit the pointer flew past. Now the selection tracks the wheel at once

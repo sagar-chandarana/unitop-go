@@ -105,13 +105,15 @@ func TestSlashTargetsTheFocusedPane(t *testing.T) {
 	for _, r := range "boom" {
 		m.handleKey(keyOf(string(r)))
 	}
-	if m.logFilt.grep != "boom" {
-		t.Errorf("log search = %q", m.logFilt.grep)
+	// The keystrokes land in the log editor's draft, not the table filter.
+	if m.logDraft != "boom" {
+		t.Errorf("log search draft = %q", m.logDraft)
 	}
 	if m.filter != "ngin" {
 		t.Errorf("the unit filter was disturbed: %q", m.filter)
 	}
-	// Esc clears only the one being edited.
+	// Esc cancels the draft; the applied log filter (empty here) and the table
+	// filter are both left alone.
 	m.handleKey(escKey())
 	if m.logFilt.grep != "" || m.filter != "ngin" {
 		t.Errorf("esc cleared the wrong filter: units=%q log=%q", m.filter, m.logFilt.grep)
@@ -224,7 +226,7 @@ func TestSpaceInsertsExactlyOneSpace(t *testing.T) {
 		read func(m *model) string
 	}{
 		{"unit filter", false, func(m *model) string { return m.filter }},
-		{"journal grep", true, func(m *model) string { return m.logFilt.grep }},
+		{"journal grep", true, func(m *model) string { return m.logDraft }},
 	}
 	for _, ed := range editors {
 		mm := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")

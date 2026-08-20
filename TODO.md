@@ -1004,6 +1004,53 @@ ack → commit loop.
   settle + mouse guards, the settle/mouse regressions, filter CHANGELOG, this
   record).
 
+#### [x] UT-043 — Separate the log-filter draft from the applied filter
+
+- **Status:** Accepted — implemented
+- **Source:** Codex bounded audit batch 1 (+ addendum) and batch 2/3;
+  maintainer authorized the open-ended audit directly. `m.logFilt` served as
+  both the editor's live buffer and the filter every journal path reads, so a
+  half-typed grep leaked into journal work.
+- **Confirmed leaks (each real):** paging (`loadOlder → fetchOlder` used
+  `m.logFilt`), poll (`postPollSync → syncJournal` restarted with the draft
+  because `m.journal.filter != m.logFilt`), resize (same via the resize sync),
+  and rendering (`logTitle`/empty-notice read the mutable `m.logFilt`, so old
+  lines sat under a title claiming the draft). The UT-042 mouse guard permitting
+  the log-wheel during edit is what exposed the paging path.
+- **Fix:** a new `m.logDraft` holds the grep while typing; the editor edits the
+  draft and applies it to `m.logFilt` only on Enter (Esc discards it, leaving
+  the applied filter untouched). `loadOlder` pages on `m.journal.filter`
+  explicitly. The footer shows the draft; the title keeps naming the applied
+  filter. This resolves batch1/1, the batch1 addendum, and batch2/3 at the
+  source, and makes the UT-042 seam-2 settle guard **redundant** — removed it;
+  a settle during edit now reconciles to the same applied filter and no-ops.
+- **Regression coverage:** `src/filter_ownership_test.go` —
+  TestLogFilterDraftNeverLeaksIntoJournalWork drives the full matrix with a
+  NONEMPTY applied filter A and a distinct draft B: the title and empty-notice
+  show A while the footer shows B; a successful poll AND a failed poll leave the
+  stream on A; paging's source is A (loadOlder reads m.journal.filter) while the
+  draft is B; a resize hide→show (140↔83, crossing the 84-col pane threshold)
+  restarts the stream on A, never B; Esc preserves A and the live stream; Enter
+  alone applies B. TestPagingUsesTheStreamFilterNotTheDraft proves paging by
+  EXECUTED argv (fakeFiniteJournalctl + applyCmd, sandbox-safe): with the stream
+  filter and the model filter set to different values, loadOlder's recorded `-g`
+  carries the stream's, never the model's (red-proven by reverting the call
+  site to m.logFilt). Plus the updated
+  TestSettleDoesNotRestartJournalWhileEditingLogFilter (draft in logDraft,
+  applied unchanged, settle no-ops, Enter applies). Draft-leak test proven red
+  (editor pointed back at m.logFilt → draft never captured). Existing tests that
+  typed into the log editor mid-edit updated to read the draft (logfilter,
+  ingress); the escape tests pass unmodified (Esc-restore outcome unchanged).
+- **CHANGELOG:** Unreleased → Fixed entry added.
+- **Gates (explicit exit codes):** gofmt clean; `go vet` 0; full `go test` 0;
+  `go test -race` 0; `nix build` 0.
+- **Review outcome:** Accepted and implemented (triage/review Codex/GPT-5,
+  implementation Claude Code/Opus 4.8, 2026-08-21). Codex accepted the
+  production diff and CHANGELOG; two review rounds strengthened the matrix
+  (nonempty applied vs draft; poll success+failure; real resize hide→show) and
+  then required an executed-argv paging proof (fakeFiniteJournalctl) in place of
+  a field read — added and red-proven. Landed as one commit + pushed.
+
 ## Review process
 
 For each item, replace `_Pending._` with one of:

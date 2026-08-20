@@ -26,7 +26,7 @@ func TestPasteIsSanitizedInBothEditors(t *testing.T) {
 		read func(m *model) string
 	}{
 		{"unit filter", false, func(m *model) string { return m.filter }},
-		{"journal grep", true, func(m *model) string { return m.logFilt.grep }},
+		{"journal grep", true, func(m *model) string { return m.logDraft }},
 	}
 	for _, ed := range editors {
 		mm := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")

@@ -1,11 +1,162 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// loadOlder must build its backwards page from the stream's applied filter, not
+// the model's m.logFilt. Proven by the recorded journalctl argv (not by reading
+// a field): the applied model filter is set to a DIFFERENT value, so a
+// regression to it would show up in the argv.
+func TestPagingUsesTheStreamFilterNotTheDraft(t *testing.T) {
+	readArgv := fakeFiniteJournalctl(t, "exit 0\n")
+
+	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
+	m.width, m.height, m.ready = 140, 30, true
+	m.connected = true
+	m.units = testUnits()
+	m.rebuild()
+
+	const streamFilter, modelFilter = "boom", "crash"
+	m.journal = &journalStream{
+		ctx:    context.Background(),
+		unit:   "nginx.service",
+		filter: logFilter{grep: streamFilter},
+	}
+	m.logs = []logLine{{cursor: "c1", msg: "seed", ts: time.Now(), prio: 6}}
+	m.logFilt = logFilter{grep: modelFilter} // deliberately != the stream's filter
+
+	cmd := m.loadOlder()
+	if cmd == nil {
+		t.Fatal("loadOlder returned no command for a cursor-bearing buffer")
+	}
+	applyCmd(t, &m, cmd)
+
+	argv := readArgv()
+	if !strings.Contains(argv, "-g\n"+streamFilter) {
+		t.Errorf("the page did not carry the stream's applied filter %q: argv=%q", streamFilter, argv)
+	}
+	if strings.Contains(argv, modelFilter) {
+		t.Errorf("the page leaked the model filter %q into journalctl: argv=%q", modelFilter, argv)
+	}
+}
+
+// The applied log filter (m.logFilt) is what every journal path reads. While
+// the editor holds a draft, no path — poll (success OR failure), resize
+// hide→show, paging, settle, title/empty-notice — may adopt it. This drives the
+// full matrix with a NONEMPTY applied filter A and a distinct draft B, so every
+// assertion distinguishes the two rather than "draft vs empty".
+func TestLogFilterDraftNeverLeaksIntoJournalWork(t *testing.T) {
+	const applied, draft = "boom", "crash"
+
+	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
+	m.width, m.height, m.ready = 140, 30, true
+	m.connected = true
+	m.units = testUnits()
+	m.rebuild()
+
+	// Start a stream on applied filter A.
+	m.focus = focusLogs
+	m.logFilt = logFilter{grep: applied}
+	m.cursor = firstUnitRow(t, &m)
+	if cmd := m.afterCursorMove(); cmd == nil {
+		t.Fatal("no stream started for the first selected unit")
+	}
+	streamed := m.journal
+	if streamed == nil || streamed.filter.grep != applied {
+		t.Fatalf("stream should carry applied filter %q, got %+v", applied, streamed)
+	}
+
+	// Open the editor and replace the draft with B.
+	m.handleKey(keyOf("/"))
+	m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlU}) // clear the seeded A
+	for _, r := range draft {
+		m.handleKey(keyOf(string(r)))
+	}
+	if m.logDraft != draft {
+		t.Fatalf("draft not captured: %q", m.logDraft)
+	}
+	if m.logFilt.grep != applied || m.journal.filter.grep != applied {
+		t.Fatalf("draft leaked into applied (%q) or stream (%q)", m.logFilt.grep, m.journal.filter.grep)
+	}
+
+	// Title and empty-notice describe A; the footer shows B.
+	if title := m.logTitle(80); !strings.Contains(title, applied) || strings.Contains(title, draft) {
+		t.Errorf("title should show applied %q not draft %q: %q", applied, draft, title)
+	}
+	m.logs = nil            // force the empty-log notice
+	m.logBacklogDone = true // ...past the "reading the journal…" phase
+	m.logEpoch++
+	if notice := strings.Join(m.renderLogWindow(80, m.logHeight()), "\n"); !strings.Contains(notice, applied) || strings.Contains(notice, draft) {
+		t.Errorf("empty notice should show applied %q not draft %q: %q", applied, draft, notice)
+	}
+	if view := stripANSI(m.View()); !strings.Contains(view, draft) {
+		t.Errorf("the footer should show the draft %q being typed", draft)
+	}
+
+	// A successful poll leaves the stream on A.
+	m.Update(unitsMsg{units: testUnits()})
+	if m.journal != streamed || m.journal.filter.grep != applied {
+		t.Fatal("a successful poll restarted the stream with the draft")
+	}
+	// A failed poll too.
+	m.Update(unitsMsg{err: errors.New("poll failed")})
+	if m.journal != streamed || m.journal.filter.grep != applied {
+		t.Fatal("a failed poll restarted the stream with the draft")
+	}
+
+	// (Paging provenance is proved by executed argv in
+	// TestPagingUsesTheStreamFilterNotTheDraft below.)
+
+	// Resize hide→show: hiding tears the stream down, showing restarts it — on
+	// the applied filter A, never the draft B.
+	m.Update(tea.WindowSizeMsg{Width: 83, Height: 30}) // < 84: log pane hidden
+	if m.logPaneVisible() {
+		t.Fatal("the log pane should be hidden at width 83")
+	}
+	m.Update(tea.WindowSizeMsg{Width: 140, Height: 30}) // shown again
+	if m.journal == nil {
+		t.Fatal("showing the pane did not restart the stream")
+	}
+	if m.journal.filter.grep != applied {
+		t.Fatalf("the restarted stream used %q, not the applied %q", m.journal.filter.grep, applied)
+	}
+	shownStream := m.journal
+
+	// Esc discards the draft; the applied filter and the live stream are intact.
+	m.handleKey(escKey())
+	if m.logFilt.grep != applied {
+		t.Errorf("esc changed the applied filter: %q", m.logFilt.grep)
+	}
+	if m.journal != shownStream {
+		t.Error("esc restarted the stream")
+	}
+
+	// A fresh edit + Enter is the only thing that applies B. (The resize forced
+	// focus back to the list when the pane hid; re-aim at the log.)
+	m.focus = focusLogs
+	m.handleKey(keyOf("/"))
+	m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlU})
+	for _, r := range draft {
+		m.handleKey(keyOf(string(r)))
+	}
+	m.handleKey(keyOf("\r"))
+	if m.logFilt.grep != draft {
+		t.Fatalf("Enter did not apply the draft: %q", m.logFilt.grep)
+	}
+	if m.journal == shownStream {
+		t.Error("committing the new filter did not restart the stream")
+	}
+	if m.journal != nil {
+		m.journal.stopAndWait()
+	}
+}
 
 // A settle firing while the log filter is being typed must not restart
 // journalctl with the half-typed filter: the editor owns that sync and defers
@@ -40,20 +191,29 @@ func TestSettleDoesNotRestartJournalWhileEditingLogFilter(t *testing.T) {
 		t.Fatal("the log filter editor did not open")
 	}
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
-	if m.logFilt.grep != "x" {
-		t.Fatalf("the filter char was not captured: %q", m.logFilt.grep)
+	// The char lands in the draft; the applied filter is untouched until Enter.
+	if m.logDraft != "x" {
+		t.Fatalf("the filter char was not captured in the draft: %q", m.logDraft)
+	}
+	if m.logFilt.grep != "" {
+		t.Fatalf("the draft leaked into the applied filter mid-edit: %q", m.logFilt.grep)
 	}
 
-	// The pending settle fires mid-edit. It must not restart the stream.
+	// The pending settle fires mid-edit. Because the applied filter is unchanged,
+	// syncJournal short-circuits and the stream is not restarted — no special
+	// case in the settle handler required.
 	m.Update(journalSettleMsg{gen: m.journalSettleGen})
 	if m.journal != streamed {
 		t.Fatal("the settle restarted journalctl with the half-typed log filter mid-edit")
 	}
 
-	// Closing the editor is what applies the filter.
+	// Closing the editor with Enter is what applies the draft.
 	m.handleKey(keyOf("\r"))
 	if m.filterInput {
 		t.Fatal("Enter did not close the filter editor")
+	}
+	if m.logFilt.grep != "x" {
+		t.Fatalf("Enter did not apply the draft to the filter: %q", m.logFilt.grep)
 	}
 	if m.journal == streamed {
 		t.Error("closing the filter editor did not apply the filter")
