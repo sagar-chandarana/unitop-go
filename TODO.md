@@ -563,9 +563,9 @@ the cross-UID variant stays deferred; see the review outcome._
   boundary (unexported fields), plus the existing paging tests.
 - **Review outcome:** Deferred (2026-08-19, both agents) — not a live bug; revisit only with separate justification if a length-preserving buffer mutation is ever introduced. The memo contract comments were made accurate under UT-030.
 
-#### [ ] UT-029 — Reset benchmark state so ns/op measures one thing
+#### [x] UT-029 — Reset benchmark state so ns/op measures one thing
 
-- **Status:** Accepted — unimplemented
+- **Status:** Accepted — implemented
 - **Confidence:** High for the mechanism; kept as plausible (measurement
   integrity — the CHANGELOG cites these numbers)
 - **Evidence:** `src/bench_render_test.go:173` — `BenchmarkScrollFullBuffer`
@@ -582,7 +582,7 @@ the cross-UID variant stays deferred; see the review outcome._
   iteration (`b.StopTimer()`/reset/`b.StartTimer()`).
 - **Regression coverage:** Compare `-benchtime=100x` against `-benchtime=10000x`
   and assert ns/op is stable.
-- **Review outcome:** Accepted — unimplemented, narrowly (triaged by Codex/GPT-5, 2026-08-19). Measured: BenchmarkScrollFullBuffer reaches the clamp only after 1538 iterations and gave 10x=10.16ms/op, 100x=3.58ms/op, 500x=8.25ms/op — the moving state is proven. BenchmarkViewWide does cross the trim threshold, but 100x vs 6000x measured 1.961 vs 1.914ms/op, so a large distortion there is not demonstrated.
+- **Review outcome:** Accepted and implemented (triage Codex/GPT-5, implementation Claude Code/Fable 5, 2026-08-20; commit "Give every benchmark iteration the same work to measure"). Triage measured the drift: ScrollFullBuffer 10.16/3.58/8.25 ms/op at 10x/100x/500x; ViewWide's trim-threshold crossing proven but small. Every benchmark now holds its state per iteration: ScrollFullBuffer resets to the live end (its 20k memo recount had silently moved inside the first timed pgup once renderLogWindow stopped calling logDisplayTotal — primed off-timer now); View/ViewWide/ViewTree restore 500 lines via holdBufferAt, which primes only the memo; backing arrays are pre-grown off-timer everywhere, including ViewFullBuffer's 20000-cap slice whose first timed append reallocated 2.7MB; and ViewFullBuffer is split — the append frame (holds at the cap) and the trim frame (BenchmarkViewFullBufferTrim, restores a cap+slack template each iteration) are separate stationary workloads instead of a 512:1 mixture cut wherever -benchtime landed. After, 1x/10x/100x: append frame 3577/3574/3574 allocs/op; trim frame 71291/71290/71290 (the real ~4.4ms, 2.7MB cost of measuring and dropping ~2k lines — amortised ~8.6µs/frame in production); ScrollFullBuffer 3875/3868/3868; ViewWide B/op residue at 1x 0.7%, was 44%.
 
 #### [x] UT-030 — Remove the stale doc comments the 0.3.1 rework left behind
 
@@ -601,7 +601,7 @@ the cross-UID variant stays deferred; see the review outcome._
 - **Suggested resolution:** Delete the stale `renderLogWindow` comment and
   correct the `logTotals` comment to describe the `shifted()` contract.
 - **Regression coverage:** None needed; documentation only.
-- **Review outcome:** Accepted (implemented by Claude Code/Fable 5, 2026-08-19; commit "Keep the log window honest about what the buffer holds"). The duplicate renderLogWindow doc is gone and logTotals' comment now describes the shifted() contract. Documentation only; no regression test.
+- **Review outcome:** Accepted (implemented by Claude Code/Fable 5, 2026-08-19; commit "Keep the log window honest about what the buffer holds"). The duplicate renderLogWindow doc is gone and logTotals' comment now describes the shifted() contract. Documentation only; no regression test. Addendum 2026-08-20: two production comments still claimed every batch trims at the cap — the trim site in model.go and the shifted() doc in view.go (which also framed the 34ms/27MB recount as the permanent at-cap frame rather than the periodic trim frame). False under block trimming: the buffer rides to cap+slack and trims every few hundred batches. Both corrected in the UT-029 commit.
 
 ## Review process
 

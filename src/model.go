@@ -309,9 +309,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			dropped := 0
 			if len(m.logs) > maxLogLines+logTrimSlack {
 				// Measure what is about to fall off the front before it goes:
-				// once the buffer is at the cap every batch trims, and leaving
-				// the memo to recount from scratch each time is what made a
-				// full buffer cost more than everything else put together.
+				// at the cap the buffer block-trims every few hundred batches,
+				// and leaving the memo to recount from scratch on each of those
+				// is what made a full buffer cost more than everything else put
+				// together.
 				cut := len(m.logs) - maxLogLines
 				dropped = m.countDisplayLines(m.logs[:cut])
 				m.logs = m.logs[:copy(m.logs, m.logs[cut:])]

@@ -66,6 +66,21 @@ func benchModel(w, h, units, logs int, tree bool) *model {
 	return &m
 }
 
+// holdBufferAt pins a benchmark's buffer, off the timer: back to its starting
+// length, with the memo describing it again. Left to grow four lines per
+// iteration, the light-traffic buffers crossed the trim threshold around
+// iteration ~5400 and the full one mixed append and trim frames in whatever
+// ratio -benchtime happened to buy — so short and long runs measured
+// different workloads. The recount happens here, off the timer, so the timed
+// path stays the shifted fast path that production takes.
+func holdBufferAt(b *testing.B, m *model, logs int) {
+	b.StopTimer()
+	m.logs = m.logs[:logs]
+	m.logEpoch++
+	_ = m.logDisplayTotal() // prime just the memo: a whole View() would churn the timed heap
+	b.StartTimer()
+}
+
 // BenchmarkView is the loop that actually runs: a batch of log lines arrives,
 // the model takes it, and the frame is redrawn. Feeding the batch through
 // Update rather than poking logEpoch matters — poking it forces the full
@@ -74,9 +89,11 @@ func benchModel(w, h, units, logs int, tree bool) *model {
 func BenchmarkView(b *testing.B) {
 	m := benchModel(132, 40, 120, 500, false)
 	arriving := benchLogs(4)
+	m.logs = append(m.logs, arriving...)[:500] // pre-grow the backing array off the timer
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		holdBufferAt(b, m, 500)
 		m.Update(journalBatch{gen: m.logGen, lines: arriving})
 		_ = m.View()
 	}
@@ -107,9 +124,11 @@ func BenchmarkViewRecount(b *testing.B) {
 func BenchmarkViewWide(b *testing.B) {
 	m := benchModel(200, 60, 120, 500, false)
 	arriving := benchLogs(4)
+	m.logs = append(m.logs, arriving...)[:500] // pre-grow the backing array off the timer
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		holdBufferAt(b, m, 500)
 		m.Update(journalBatch{gen: m.logGen, lines: arriving})
 		_ = m.View()
 	}
@@ -118,9 +137,11 @@ func BenchmarkViewWide(b *testing.B) {
 func BenchmarkViewTree(b *testing.B) {
 	m := benchModel(132, 40, 120, 500, true)
 	arriving := benchLogs(4)
+	m.logs = append(m.logs, arriving...)[:500] // pre-grow the backing array off the timer
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		holdBufferAt(b, m, 500)
 		m.Update(journalBatch{gen: m.logGen, lines: arriving})
 		_ = m.View()
 	}
@@ -154,28 +175,63 @@ func BenchmarkParseShow(b *testing.B) {
 	}
 }
 
-// At the cap the buffer is trimmed on every batch, and a trim drops lines whose
-// heights were counted — so the memo cannot simply be extended. This is the
-// worst steady state there is: anyone watching a chatty service reaches it and
-// stays there.
+// At the cap almost every frame is an append: the buffer rides from the cap
+// toward cap+slack four lines at a time, the memo shifting at its end. This
+// is the steady state anyone watching a chatty service lives in. The
+// periodic block trim is a different workload, measured on its own below —
+// mixed in here, short and long runs bought different fractions of the
+// 512-append:1-trim cycle and measured different things.
 func BenchmarkViewFullBuffer(b *testing.B) {
 	m := benchModel(132, 40, 120, maxLogLines, false)
 	arriving := benchLogs(4)
+	m.logs = append(m.logs, arriving...)[:maxLogLines] // pre-grow off the timer
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		holdBufferAt(b, m, maxLogLines)
+		m.Update(journalBatch{gen: m.logGen, lines: arriving})
+		_ = m.View()
+	}
+}
+
+// And the trim frame itself: the batch that carries the buffer past
+// cap+slack, measuring the heights of the oldest ~2k lines, dropping them,
+// and shifting the memo by both ends.
+func BenchmarkViewFullBufferTrim(b *testing.B) {
+	m := benchModel(132, 40, 120, maxLogLines+logTrimSlack, false)
+	arriving := benchLogs(4)
+	template := append([]logLine(nil), m.logs...)
+	m.logs = append(m.logs, arriving...)[:len(template)] // pre-grow off the timer
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		m.logs = append(m.logs[:0], template...) // a trim rearranges the slice; restore it
+		m.logEpoch++
+		_ = m.logDisplayTotal()
+		b.StartTimer()
 		m.Update(journalBatch{gen: m.logGen, lines: arriving})
 		_ = m.View()
 	}
 }
 
 // And scrolling in a full buffer, which asks for the total on every keypress.
+// The position is reset each iteration — two stores, nothing against a
+// millisecond frame — so every iteration measures the same keypress: the
+// first pgup from the live end. Left to accumulate, the walk hit the clamp
+// after ~1500 iterations and measured the deepest window from then on, so
+// ns/op depended on -benchtime.
 func BenchmarkScrollFullBuffer(b *testing.B) {
 	m := benchModel(132, 40, 120, maxLogLines, false)
 	m.focus = focusLogs
+	// The first scroll arithmetic recounts all 20k entries to prime the memo;
+	// pay that once, off the timer, or ns/op depends on how many iterations
+	// the one-time cost is amortised over.
+	_ = m.logDisplayTotal()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		m.logScroll, m.logFollow = 0, true
 		m.logKey("pgup")
 		_ = m.View()
 	}

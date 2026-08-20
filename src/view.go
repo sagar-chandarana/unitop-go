@@ -149,10 +149,10 @@ type logTotals struct {
 // re-wrapping the whole buffer each time one arrived — and the pane asks for
 // the total on every frame.
 //
-// Both halves matter. Extending alone still recounted everything once the
-// buffer reached maxLogLines, because from then on every batch also trims: at
-// the cap a frame cost 34ms and 27MB, which is where a chatty service ends up
-// and stays. Both ends of the buffer are known at the call site, so both can be
+// Both halves matter. Extending alone still recounted everything whenever a
+// batch trimmed — at the cap that is every few hundred batches, each time the
+// ride over the trim slack ends — and every one of those frames cost 34ms and
+// 27MB, in the state a chatty service ends up in and stays. Both ends of the buffer are known at the call site, so both can be
 // accounted for.
 //
 // It refuses unless the memo describes exactly the buffer that changed; a page
