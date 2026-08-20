@@ -137,6 +137,11 @@ type model struct {
 	// would quietly restore the full recount on every batch that the memo
 	// exists to avoid.
 	logEpoch int
+	// logBytes is the retained journal size — the string bytes of every held
+	// logLine — kept in step with logs so the buffer can be trimmed by size
+	// as well as by line count. A monitored host emitting large entries would
+	// otherwise blow past any line cap.
+	logBytes int
 	// work owns the poll and action children; see progWork. One stable
 	// pointer for the model's lifetime, shared by every Cmd closure.
 	work *progWork
@@ -351,17 +356,19 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			added := m.countDisplayLines(msg.lines)
 			prev := len(m.logs)
 
+			for _, l := range msg.lines {
+				m.logBytes += lineBytes(l)
+			}
 			m.logs = append(m.logs, msg.lines...)
 			dropped := 0
-			if len(m.logs) > maxLogLines+logTrimSlack {
-				// Measure what is about to fall off the front before it goes:
-				// at the cap the buffer block-trims every few hundred batches,
-				// and leaving the memo to recount from scratch on each of those
-				// is what made a full buffer cost more than everything else put
-				// together.
-				cut := len(m.logs) - maxLogLines
+			// Trim oldest when over EITHER budget — line count or retained
+			// bytes. Block-trims past a slack high-water so the memo is not
+			// recounted every batch; measure the dropped display lines before
+			// they go so shifted() can adjust the memo.
+			if cut, dbytes := trimCut(m.logs, m.logBytes); cut > 0 {
 				dropped = m.countDisplayLines(m.logs[:cut])
 				m.logs = m.logs[:copy(m.logs, m.logs[cut:])]
+				m.logBytes -= dbytes
 				// Whatever beginning we had reached fell off the front with the
 				// cut; claiming it would make discarded history look complete.
 				m.logAtStart = false
@@ -418,6 +425,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(msg.lines) > 0 {
 			// Prepending does not move the view: logScroll counts from the
 			// bottom, and the bottom has not moved.
+			for _, l := range msg.lines {
+				m.logBytes += lineBytes(l)
+			}
 			m.logs = append(msg.lines, m.logs...)
 			m.logEpoch++
 		}
@@ -836,7 +846,9 @@ func (m model) atTopOfLog() bool {
 }
 
 // logBufferFull reports that no more history will be paged in.
-func (m model) logBufferFull() bool { return len(m.logs) >= maxLogLines }
+func (m model) logBufferFull() bool {
+	return len(m.logs) >= maxLogLines || m.logBytes >= maxLogBytes
+}
 
 // loadOlder fetches the page before the oldest line held, once at a time.
 func (m *model) loadOlder() tea.Cmd {
@@ -1185,6 +1197,7 @@ func (m *model) syncJournal() tea.Cmd {
 	m.journal.stopAndWait()
 	m.journal = nil
 	m.logs = nil
+	m.logBytes = 0
 	m.logEpoch++
 	// A new unit's log opens where a log opens: at the live end. Carrying the
 	// old one's position over left the view above an empty buffer, and every
@@ -1216,4 +1229,35 @@ func (m model) selectedUnit() (Unit, bool) {
 		return r.unit, true
 	}
 	return Unit{}, false
+}
+
+// The retained-journal byte budget, beside the line cap. A screen shows a
+// tiny fraction of it; the ceiling exists so a host emitting large entries
+// cannot grow the buffer without bound, not to be reached in normal use.
+// logByteSlack lets the buffer ride over before a block trim, mirroring
+// logTrimSlack. Vars so a test can shrink them without gigabyte fixtures.
+var (
+	maxLogBytes  = 16 << 20
+	logByteSlack = 4 << 20
+)
+
+// lineBytes is what a held logLine costs the buffer: its string fields.
+func lineBytes(l logLine) int {
+	return len(l.msg) + len(l.ident) + len(l.pid) + len(l.cursor)
+}
+
+// trimCut reports how many oldest entries to drop so the buffer is back under
+// BOTH budgets, and their combined byte cost. It returns 0 until a high-water
+// (cap plus slack) is crossed, so the common batch does no work; once
+// crossed, it drops oldest until the remainder satisfies the line AND byte
+// caps at once.
+func trimCut(logs []logLine, total int) (cut, droppedBytes int) {
+	if len(logs) <= maxLogLines+logTrimSlack && total <= maxLogBytes+logByteSlack {
+		return 0, 0
+	}
+	for cut < len(logs) && (len(logs)-cut > maxLogLines || total-droppedBytes > maxLogBytes) {
+		droppedBytes += lineBytes(logs[cut])
+		cut++
+	}
+	return cut, droppedBytes
 }

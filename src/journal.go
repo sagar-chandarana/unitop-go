@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/rivo/uniseg"
 	"io"
 	"os/exec"
 	"strconv"
@@ -845,15 +847,24 @@ func parseJournalJSON(b []byte) (logLine, bool) {
 		if s == "" {
 			return logLine{}, false
 		}
-		return logLine{ts: time.Now(), prio: 6, msg: sanitizeMessage(s), meta: true}, true
+		return logLine{ts: time.Now(), prio: 6, msg: capMessage(sanitizeMessage(s)), meta: true}, true
 	}
 	l := logLine{prio: 6}
 	// Everything here is whatever the service wrote. See sanitize.go: raw, it
 	// can move the cursor and repaint the screen.
-	l.msg = sanitizeMessage(jsonField(e.Message))
-	l.ident = sanitizeText(jsonField(e.Ident))
-	l.pid = sanitizeText(jsonField(e.PID))
-	l.cursor = jsonField(e.Cursor)
+	// Every retained field is bounded here, at the parse boundary, so a
+	// hostile host cannot smuggle a 4 MiB SYSLOG_IDENTIFIER, _PID or
+	// __CURSOR past the per-entry cap and into the channel, the batch and
+	// the buffer. A cursor over the bound is dropped to empty — the entry
+	// simply cannot anchor a backward page, which the paging code already
+	// handles for cursorless entries — rather than being retained AND fed
+	// to journalctl as a giant --cursor argument.
+	l.msg = capMessage(sanitizeMessage(jsonField(e.Message)))
+	l.ident = capField(sanitizeText(jsonField(e.Ident)), maxFieldBytes)
+	l.pid = capField(sanitizeText(jsonField(e.PID)), maxFieldBytes)
+	if c := jsonField(e.Cursor); len(c) <= maxCursorBytes {
+		l.cursor = c
+	}
 	if p := jsonField(e.Priority); p != "" {
 		if n, err := strconv.Atoi(p); err == nil {
 			l.prio = n
@@ -931,4 +942,65 @@ func readEntryLine(br *bufio.Reader) ([]byte, error) {
 		}
 		return buf, err
 	}
+}
+
+// maxLineBytes is the hard cap on one entry's DISPLAY message, MARKER
+// INCLUDED: a screen shows only a few lines of any one entry, so the 4 MiB
+// an entry is allowed on the wire (maxEntryBytes) is never readable —
+// retaining thousands of them, or re-wrapping one every frame, was the
+// memory and CPU blow-up. maxFieldBytes/maxCursorBytes bound the other
+// attacker-controlled fields. Vars so a test can shrink them without GiB
+// fixtures.
+var (
+	maxLineBytes   = 8 << 10
+	maxFieldBytes  = 256
+	maxCursorBytes = 512
+)
+
+// elisionReserve is the space capMessage holds back for its marker so the
+// returned string never exceeds maxLineBytes. The marker is
+// " ⟨unitop: <n> bytes elided⟩" — under 40 bytes even for a 4 MiB count.
+const elisionReserve = 48
+
+// capMessage truncates a sanitized message so the result — truncated body
+// plus the elision marker — is at most maxLineBytes, cutting on a grapheme
+// boundary so a cluster is never split.
+func capMessage(msg string) string {
+	if len(msg) <= maxLineBytes {
+		return msg
+	}
+	budget, marker := maxLineBytes-elisionReserve, true
+	if budget < 0 {
+		// The cap is smaller than the marker itself: hard-truncate with no
+		// marker so the hard limit still holds.
+		budget, marker = maxLineBytes, false
+	}
+	off, state := 0, -1
+	rest := msg
+	for len(rest) > 0 {
+		cl, r, _, st := uniseg.FirstGraphemeClusterInString(rest, state)
+		if off+len(cl) > budget {
+			break
+		}
+		off += len(cl)
+		rest, state = r, st
+	}
+	if !marker {
+		return msg[:off]
+	}
+	return msg[:off] + fmt.Sprintf(" ⟨unitop: %d bytes elided⟩", len(msg)-off)
+}
+
+// capField truncates an identifier-like field to at most n bytes on a UTF-8
+// boundary, silently — ident and pid are short by nature; an oversized one
+// is a hostile host, not something to annotate.
+func capField(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := n
+	for cut > 0 && s[cut]&0xc0 == 0x80 { // back off a UTF-8 continuation byte
+		cut--
+	}
+	return s[:cut]
 }

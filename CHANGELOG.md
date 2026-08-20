@@ -10,6 +10,14 @@ to change.
 
 ### Fixed
 
+- **A host cannot OOM or freeze the client through the journal.** The live
+  log buffer was capped by line count only (up to 22048 entries), each
+  allowed 4 MiB — a monitored unit emitting large entries could retain many
+  gigabytes, and one 4 MiB entry made every frame re-wrap it (~half a second
+  each). Each entry is now capped to a readable display size at parse, the
+  buffer is trimmed by total bytes as well as lines, and a large entry wraps
+  to a bounded height — a full buffer with a maximum entry now renders in
+  under a millisecond.
 - **A hostile host cannot OOM the client by flooding a poll or action.**
   Every systemctl/ssh/date command buffered its whole stdout in memory
   (Cmd.Output/CombinedOutput); a compromised or broken monitored host could

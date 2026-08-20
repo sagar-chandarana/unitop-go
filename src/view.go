@@ -1288,8 +1288,12 @@ func (m model) logTopMarker(width int) string {
 		return stFaint.Render("── beginning of this unit's journal ──")
 	case m.logBufferFull():
 		// The retention policy, not the live count: between trims the buffer
-		// deliberately rides up to logTrimSlack past the cap, so any exact
-		// number here would be false most of the time and jitter besides.
+		// deliberately rides up to the slack past a cap, so any exact number
+		// here would be false most of the time and jitter besides. Which cap
+		// bound first is honest to say.
+		if len(m.logs) < maxLogLines {
+			return stWarn.Render("── buffer full: unitop keeps the most recent entries that fit its size limit; use journalctl for more ──")
+		}
 		return stWarn.Render(fmt.Sprintf(
 			"── buffer full: unitop keeps the newest %d lines; use journalctl for more ──", maxLogLines))
 	default:

@@ -712,9 +712,9 @@ not silently recycled:
   (eight shapes × split/full, no panic, correct render). Both agents
   runtime-reproduced the original panic.
 
-#### [ ] UT-033 — Bound the live journal buffer by bytes, not only lines
+#### [x] UT-033 — Bound the live journal buffer by bytes, not only lines
 
-- **Status:** Pending review
+- **Status:** Accepted — implemented
 - **Confidence:** High — reproduced by runtime probe (1.2 GiB from 300 lines)
 - **Evidence:** `model.go:354-368` trims `m.logs` by count only
   (`maxLogLines` 20000 + `logTrimSlack` 2048); `journal.go:904` allows a
@@ -739,7 +739,7 @@ not silently recycled:
   follow/scroll invariants, honest marker, no queued path exceeds the budget
   by more than one explicitly bounded record; a safe benchmark showing a
   max-size entry is not re-wrapped every frame.
-- **Review outcome:** _Pending._
+- **Review outcome:** Accepted and implemented (Claude Code/Fable 5, 2026-08-20; commit "Bound the live journal buffer by bytes, and cap one entry"). Two layers. (1) A per-entry cap at the parse chokepoint bounds EVERY retained field: capMessage truncates the message to maxLineBytes (8 KiB) MARKER INCLUDED (a fixed elisionReserve held back) on a grapheme boundary; capField truncates ident/pid to maxFieldBytes (256); an oversized __CURSOR (over maxCursorBytes 512) is dropped so the entry becomes cursorless rather than retained-and-fed-to-journalctl — so every downstream buffer (the 512 parsed-line channel, the batch, the model) inherits the bound, AND a single entry wraps to a bounded height instead of the ~50k display lines a 4 MiB entry produced. (2) An aggregate model byte budget beside the line cap: model tracks logBytes (sum of every held logLine string field), kept exact across append+trim / prepend / clear; trimCut drops oldest until BOTH the line and byte caps hold, block-trimming past a slack high-water so the shifted() memo is not recounted per batch; logBufferFull and the honest top marker are byte-aware (says "size limit" when the byte cap bound first, the line count otherwise). Bytes are counted post-sanitize (tab/C0 expansion included). Regressions (src/journal_bytes_test.go): TestCapMessageBoundary (cap±1, wide-cluster not split, result never exceeds the cap with its marker), TestParseBoundsEveryField (a 100 KB message/ident/pid/cursor all bounded, oversized cursor dropped, cursor-at-limit kept, lineBytes under the per-entry ceiling), TestBackwardPageRespectsTheByteBudget (loadOlder refuses while byte-full and a prepend overshoots by at most one page with exact accounting), TestTrimCutByteBudget (uneven sizes, smallest-prefix drop, idle under budget), TestModelByteAccountingAndTrim (200-batch uneven flood: logBytes stays exactly in sync with the buffer and never rides past cap+slack, oldest trimmed, follow/scroll invariants, and the selection-change clear zeroes it), and BenchmarkViewLargestEntry (a max-size entry renders in ~0.9 ms vs the original ~530 ms — the per-entry re-wrap is gone, ~575x). Supersedes the UT-003 live-model byte deferral.
 
 #### [x] UT-034 — Bound poll and action command output by bytes
 
