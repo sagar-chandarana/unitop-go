@@ -76,35 +76,59 @@ var (
 // that ignores SGR 2 loses the hierarchy but keeps every word legible, which is
 // the right way round to fail.
 var (
-	stBase     = lipgloss.NewStyle()
-	stFaint    = lipgloss.NewStyle().Faint(true)
-	stHeader   = lipgloss.NewStyle().Bold(true)
-	stHost     = lipgloss.NewStyle().Foreground(colCyan).Bold(true)
-	stColHead  = lipgloss.NewStyle() // plain: the sorted column is the one with weight
-	stSortDesc = lipgloss.NewStyle().Foreground(colRed).Bold(true)
-	stSortAsc  = lipgloss.NewStyle().Foreground(colGreen).Bold(true)
-	stAccent   = lipgloss.NewStyle().Foreground(colCyan)
-	stKey      = lipgloss.NewStyle().Foreground(colBlue)
-	stAlert    = lipgloss.NewStyle().Foreground(colRed)
-	stBad      = lipgloss.NewStyle().Foreground(colRed).Bold(true)
-	stWarn     = lipgloss.NewStyle().Foreground(colYellow)
-	stGood     = lipgloss.NewStyle().Foreground(colGreen)
-	stBorder   = lipgloss.NewStyle().Foreground(colGrey).Faint(true)
-	stFrame    = lipgloss.NewStyle().Foreground(colMagenta)
-	stFilter   = lipgloss.NewStyle().Foreground(colYellow).Bold(true)
+	stBase        = lipgloss.NewStyle()
+	stFaint       = lipgloss.NewStyle().Faint(true)
+	stHeader      = lipgloss.NewStyle().Bold(true)
+	stHost        = lipgloss.NewStyle().Foreground(colCyan).Bold(true)
+	stColHead     = lipgloss.NewStyle() // plain: the sorted column is the one with weight
+	stSortDesc    = lipgloss.NewStyle().Foreground(colRed).Bold(true)
+	stSortAsc     = lipgloss.NewStyle().Foreground(colGreen).Bold(true)
+	stSortNeutral = lipgloss.NewStyle().Bold(true) // sorted, but the direction is not a magnitude
+	stAccent      = lipgloss.NewStyle().Foreground(colCyan)
+	stKey         = lipgloss.NewStyle().Foreground(colBlue)
+	stAlert       = lipgloss.NewStyle().Foreground(colRed)
+	stBad         = lipgloss.NewStyle().Foreground(colRed).Bold(true)
+	stWarn        = lipgloss.NewStyle().Foreground(colYellow)
+	stGood        = lipgloss.NewStyle().Foreground(colGreen)
+	stBorder      = lipgloss.NewStyle().Foreground(colGrey).Faint(true)
+	stFrame       = lipgloss.NewStyle().Foreground(colMagenta)
+	stFilter      = lipgloss.NewStyle().Foreground(colYellow).Bold(true)
 )
 
-// sortStyle colours the sorted column's title by which way it is sorted —
-// red for high to low, green for low to high — so the direction is legible
-// from the colour as well as from the arrow beside it. This is the one place
-// red and green are a direction rather than health; everywhere else they keep
-// their usual meaning, and nothing here is worse off if the colours are
-// missed, because the arrow already says it.
-func sortStyle(reverse bool) lipgloss.Style {
-	if reverse {
+// sortStyle colours the sorted column's title by the direction it sorts, but
+// only where a direction colour means something. Red is high to low, green is
+// low to high — the one place those two are a direction rather than health —
+// and the arrow beside them says the same thing, so nothing is worse off if the
+// colours are missed. The catch is that "high to low" is not the natural order
+// of every column:
+//
+//   - The numeric metric columns sort by magnitude, busiest first, so the
+//     unreversed order really is high to low (red), reversed low to high
+//     (green).
+//   - Uptime sorts on the start timestamp, and its natural newest-first order
+//     shows the SHORTEST age first — low to high as displayed — so its colours
+//     are inverted from the metric keys.
+//   - Name is alphabetical and state is an attention rank, not magnitudes at
+//     all; colouring them red or green would assert a high/low order that does
+//     not exist. They stay neutral (bold, so the sorted column still carries
+//     weight) and let the arrow alone say which way.
+func sortStyle(key sortKey, reverse bool) lipgloss.Style {
+	switch key {
+	case sortName, sortState:
+		return stSortNeutral
+	case sortUptime:
+		// Newest-first (unreversed) is the shortest displayed age first: low to
+		// high, the opposite of a magnitude key.
+		if reverse {
+			return stSortDesc
+		}
 		return stSortAsc
+	default:
+		if reverse {
+			return stSortAsc
+		}
+		return stSortDesc
 	}
-	return stSortDesc
 }
 
 // heat ramps a magnitude across five steps, coolest to hottest:

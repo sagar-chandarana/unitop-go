@@ -53,17 +53,49 @@ func TestHeatRamps(t *testing.T) {
 }
 
 // The sorted column says which way it is sorted twice over — the arrow and the
-// colour — so the colour must actually differ with direction, and must stay in
-// the palette like every other one.
+// colour — but "high to low" is only a real direction on the magnitude columns,
+// so the colour must track that and stay neutral where it would lie. Whichever
+// key, the sorted title stays bold so it carries weight.
 func TestSortStyleShowsDirection(t *testing.T) {
-	desc, asc := sortStyle(false), sortStyle(true)
-	if desc.GetForeground() != colRed {
-		t.Errorf("high to low should be red, got %v", desc.GetForeground())
+	// Every magnitude column: unreversed is high to low (red), reversed low to
+	// high (green).
+	for _, key := range []sortKey{
+		sortCPU, sortMem, sortNetIn, sortNetOut,
+		sortIORead, sortIOWrite, sortRestarts, sortTasks,
+	} {
+		if got := sortStyle(key, false).GetForeground(); got != colRed {
+			t.Errorf("%s high to low should be red, got %v", key, got)
+		}
+		if got := sortStyle(key, true).GetForeground(); got != colGreen {
+			t.Errorf("%s low to high should be green, got %v", key, got)
+		}
 	}
-	if asc.GetForeground() != colGreen {
-		t.Errorf("low to high should be green, got %v", asc.GetForeground())
+
+	// Uptime sorts on the start timestamp: unreversed shows the shortest age
+	// first — low to high, green — and reversed the longest, high to low, red.
+	// That is inverted from a magnitude key.
+	if got := sortStyle(sortUptime, false).GetForeground(); got != colGreen {
+		t.Errorf("uptime newest-first is shortest age first: should be green, got %v", got)
 	}
-	if !desc.GetBold() || !asc.GetBold() {
-		t.Error("the sorted column is the bold one, whichever way it sorts")
+	if got := sortStyle(sortUptime, true).GetForeground(); got != colRed {
+		t.Errorf("uptime oldest-first is longest age first: should be red, got %v", got)
+	}
+
+	// Name is alphabetical and state is an attention rank, not magnitudes: no
+	// colour at all either way — exactly the terminal's own foreground, so an
+	// accidental yellow or cyan would fail here too, not only red or green.
+	for _, key := range []sortKey{sortName, sortState} {
+		for _, reverse := range []bool{false, true} {
+			if fg := sortStyle(key, reverse).GetForeground(); fg != (lipgloss.NoColor{}) {
+				t.Errorf("%s reverse=%v must claim no direction colour, got %v", key, reverse, fg)
+			}
+		}
+	}
+
+	// The sorted title is bold whichever column and whichever way it sorts.
+	for _, key := range []sortKey{sortCPU, sortUptime, sortName, sortState} {
+		if !sortStyle(key, false).GetBold() || !sortStyle(key, true).GetBold() {
+			t.Errorf("%s sorted title should be bold both ways", key)
+		}
 	}
 }

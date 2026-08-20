@@ -589,7 +589,7 @@ func (m model) viewHost() []string {
 	if m.reverse {
 		arrow = "↑"
 	}
-	mode := []string{stFaint.Render("sort ") + sortStyle(m.reverse).Render(m.sortBy.String()+arrow)}
+	mode := []string{stFaint.Render("sort ") + sortStyle(m.sortBy, m.reverse).Render(m.sortBy.String()+arrow)}
 	if m.tree {
 		mode = append(mode, stAccent.Render("tree"))
 	}
@@ -789,7 +789,7 @@ func (m model) viewTable(width, height int) []string {
 			cell = padLeft(t, c.width)
 		}
 		if c.key == m.sortBy {
-			head = append(head, sortStyle(m.reverse).Render(cell))
+			head = append(head, sortStyle(c.key, m.reverse).Render(cell))
 		} else {
 			head = append(head, stColHead.Render(cell))
 		}

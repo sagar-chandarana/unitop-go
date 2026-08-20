@@ -13,8 +13,11 @@ to change.
 - **The host name is cyan** — in the header and on the connecting screen — the
   one heading that carries a colour, because it answers which machine you are
   looking at.
-- **The sorted column's title now says which way it sorts**: red for high to
-  low, green for low to high, in the table and in the header's `sort` chip.
+- **The sorted column's title says which way it sorts**, in the table and in
+  the header's `sort` chip: red is high to low and green is low to high on the
+  magnitude columns. Uptime is coloured by age, so newest-first — the shortest
+  age — is green; and name and state are not magnitudes (alphabetical, and by
+  attention), so they stay uncoloured and let the arrow alone say the direction.
 - **Colour is back everywhere it costs nothing to read.** The filter is yellow
   and bold again; the focused pane frame, the menu box, the spinners and the
   editor caret are magenta again; the rules and the unfocused frame are grey
