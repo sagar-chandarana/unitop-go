@@ -10,6 +10,12 @@ to change.
 
 ### Fixed
 
+- **A hostile monitored host can no longer crash the UI with a whitespace
+  `TriggeredBy`.** The "triggered by" line indexed the first word of that
+  field, guarded only against an empty string — but a value of only
+  whitespace (a tab the sanitizer expands to spaces, a non-breaking space)
+  is non-empty with no words, so it panicked the whole TUI. It renders the
+  first trigger when there is one and nothing when there is not.
 - **No poll or action outlives the screen.** Quitting during a slow startup
   poll or a unit action used to abandon its systemctl, sudo, or ssh child —
   an action could keep mutating a unit after the UI was gone. Every such

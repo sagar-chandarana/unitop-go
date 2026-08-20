@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -175,5 +176,57 @@ func TestEscapeInTheEditorCancels(t *testing.T) {
 	fresh.handleKey(escKey())
 	if fresh.filter != "" {
 		t.Errorf("a cancelled new filter left %q behind", fresh.filter)
+	}
+}
+
+// A monitored host controls every systemctl-show field, and the sanitizer
+// keeps whitespace (a tab expands to four spaces, NBSP survives), so a
+// whitespace-only TriggeredBy is non-empty while strings.Fields is empty —
+// which panicked View at the "triggered by" line. Every shape must render
+// without panic: whitespace-only shows nothing, a real value shows the
+// first trigger, in both split and full view.
+func TestTriggeredByNeverPanics(t *testing.T) {
+	cases := map[string]struct {
+		raw       string // the exact bytes after TriggeredBy= in `systemctl show`
+		wantShown bool
+		wantUnit  string
+	}{
+		"empty":         {"", false, ""},
+		"ascii spaces":  {"   ", false, ""},
+		"tab":           {"\t", false, ""}, // sanitizes to four spaces
+		"nbsp":          {" ", false, ""},
+		"cr":            {"\r", false, ""},
+		"real single":   {"foo.timer", true, "foo.timer"},
+		"real multi":    {"foo.timer bar.socket", true, "foo.timer"},
+		"leading space": {"  real.socket", true, "real.socket"},
+	}
+	for name, c := range cases {
+		for _, full := range []bool{false, true} {
+			block := "Id=evil.service\nActiveState=active\nSubState=running\nTriggeredBy=" + c.raw + "\n"
+			units := parseShow(block)
+			if len(units) != 1 {
+				t.Fatalf("%s: parsed %d units", name, len(units))
+			}
+			m := newModel(runner{host: "root@hostile"}, "h", time.Second, sortCPU, false, false, false, "")
+			m.width, m.height, m.ready, m.connected = 140, 30, true, true
+			m.units = units
+			m.rebuild()
+			m.fullView = full
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Fatalf("%s (full=%v): panic rendering a hostile unit: %v", name, full, r)
+					}
+				}()
+				out := stripANSI(m.View())
+				shown := strings.Contains(out, "triggered by")
+				if shown != c.wantShown {
+					t.Errorf("%s (full=%v): 'triggered by' shown=%v, want %v", name, full, shown, c.wantShown)
+				}
+				if c.wantShown && !strings.Contains(out, shortUnit(c.wantUnit)) {
+					t.Errorf("%s (full=%v): first trigger %q not rendered:\n%s", name, full, c.wantUnit, out)
+				}
+			}()
+		}
 	}
 }

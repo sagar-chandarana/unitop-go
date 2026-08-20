@@ -1032,8 +1032,12 @@ func (m model) unitDetail(u Unit, width int) []string {
 	if u.Slice != "" && u.Slice != "system.slice" {
 		cfg = append(cfg, stFaint.Render("slice ")+stBase.Render(sliceLabel(u.Slice)))
 	}
-	if u.TriggeredBy != "" {
-		by := strings.Fields(u.TriggeredBy)
+	// Fields, not the raw value: a monitored host controls TriggeredBy, and
+	// the sanitizer keeps whitespace (a tab becomes four spaces), so a value
+	// of only whitespace is non-empty yet Fields() is empty — by[0] there
+	// panicked the whole TUI. Render the first trigger when there is one,
+	// nothing when there is not.
+	if by := strings.Fields(u.TriggeredBy); len(by) > 0 {
 		cfg = append(cfg, stFaint.Render("triggered by ")+stBase.Render(shortUnit(by[0])))
 	}
 	if len(cfg) > 0 {

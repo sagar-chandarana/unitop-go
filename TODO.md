@@ -646,6 +646,198 @@ Found by adversarial review during implementation of earlier fixes.
   exact reaping before shutdown returns; mux-close ordering.
 - **Review outcome:** Accepted and implemented (triage Codex/GPT-5, implementation Claude Code/Fable 5, 2026-08-20; commit "Own every poll and action child at exit"). progWork is the stable owner pointer newModel creates: root context/cancel, one mutex guarding a closing flag, and a WaitGroup. begin runs INSIDE each Cmd closure immediately before the external work — registering at construction would deadlock shutdown if bubbletea never scheduled the Cmd — and under the mutex either refuses (closing) or Adds before unlocking; shutdown marks closing and cancels before unlocking, then Waits, so Add can never race Wait and a late Cmd launches nothing (returns nil). pollCmd derives its 25s and runAction its 90s timeout from the root. model.shutdown() is the one idempotent teardown for BOTH systems — drain progWork, then stopAndWait the journal — used by quit() before tea.Quit and by the factored runProgram helper (which main calls) unconditionally after p.Run, BEFORE runner.close tears the mux down, so ssh connections drain before their control socket goes away. Journal replacement/page semantics untouched. Regressions (direct exec.Cmd children — `$$` then exec sleep, no nesting): TestQuitReapsThePollChild (local systemctl and fake-ssh remote: ESRCH before the ctrl-c keypress returns), TestShutdownReapsTheActionChild (local and remote: no action keeps mutating after the screen is gone), TestLateCmdIsRefused (constructed before shutdown, invoked after: canary never runs, nil returned), TestBeginShutdownRace (×200 under -race, plus idempotent re-shutdown), TestMuxOutlivesTheDrain (the mux dir survives the drain and only the subsequent close removes it), and TestPostRunShutdownReapsThroughARealProgram — the unconditional post-Run route against a REAL bubbletea Program (no renderer, silent pipe input, no signal handler), externally Killed, holding the factored runProgram helper main uses to reaped-before-return.
 
+## Pending review — Security (Claude Code)
+
+| Field | Value |
+| --- | --- |
+| Queue status | Pending review |
+| Submitted by | Claude Code (Fable 5), three focused security reviewers |
+| Cross-checked with | OpenAI Codex (GPT-5), independent parallel pass |
+| Submitted | 2026-08-20 UTC |
+| Reviewed revision | `23e18730921ab1fc5653024dacdb5f6cbd753c4e` (clean tree) |
+| Scope | Whole-tree security audit: command-exec/shell-injection/SSH, untrusted-input + terminal-escape safety, resource-exhaustion/concurrency, and CI/release integrity |
+| Automated checks | `go test -race ./...`, `go vet`, `gofmt`, ShellCheck (helper scripts), govulncheck (zero reachable) all pass at the reviewed revision |
+
+Security findings from a four-pass review (three focused reviewers plus
+Codex's independent pass), cross-checked and each EXPLOITABLE item verified
+against the code. Classification: **EXPLOITABLE** = a real DoS/crash within
+the tool's threat model (`-H` connects to arbitrary/untrusted hosts, and a
+monitored unit controls its own journal/property bytes); **HARDENING** =
+defense-in-depth; **CORRECTNESS** = a modal-integrity bug, not a vuln.
+
+Two proposed IDs were rejected in triage and are recorded here so they are
+not silently recycled:
+
+- **UT-036 (rejected)** — `-H`'s `--` placed after the host token
+  (collect.go:74/85) lets a `-o…` host be parsed as an ssh option, BUT the
+  reviewer proved no execution (unitop's always-spaced remote command lands
+  in the hostname slot and ssh aborts on invalid characters before
+  ProxyCommand fires), it requires a self-supplied hostile `-H`, and this
+  repo has a durable warning against reviving the post-host `--` report. Not
+  a security issue; a leading-dash CLI-hygiene check may be added separately.
+- **UT-037 (rejected)** — no `--` before the remote unit-name list to
+  `systemctl show` (collect.go:224). A valid systemd unit name is escaped
+  (`\x2dfoo.service`), never a literal leading hyphen, and a hostile remote
+  fabricating list output already controls the subsequent remote systemctl;
+  at most it fails its own poll. Not actionable absent a supported-host
+  reproduction with a real loaded unit.
+
+### P1 — exploitable
+
+#### [x] UT-032 — Guard the `TriggeredBy` render against a whitespace-only value
+
+- **Status:** Accepted — implemented
+- **Confidence:** High — runtime-proven by both agents independently
+- **Evidence:** `view.go:1037` indexed `strings.Fields(u.TriggeredBy)[0]`
+  guarded only by `u.TriggeredBy != ""`. `parseShow` sanitizes but keeps
+  whitespace (a tab becomes four spaces, NBSP survives), so a monitored host
+  returning `TriggeredBy=\t` yields a non-empty value whose `Fields()` is
+  empty — `by[0]` panics.
+- **Impact:** A hostile/compromised/MITM'd `-H` host crashes the operator's
+  TUI when the affected unit is on the cursor (row 0 is auto-selected on
+  connect, and the attacker controls the sort metrics).
+- **Suggested resolution:** Render the first trigger only when
+  `len(Fields) > 0`; render nothing otherwise.
+- **Regression coverage:** parseShow→rebuild→View over empty / ASCII spaces
+  / tab / NBSP / CR / real single / real multi / leading-space, in split AND
+  full view; no panic, whitespace renders nothing, real renders the first
+  trigger. Plus a sweep proving every other terminal-bound `Fields(...)[0]`
+  is length-guarded.
+- **Review outcome:** Accepted and implemented (Claude Code/Fable 5,
+  2026-08-20; commit "Do not panic on a hostile unit's whitespace
+  TriggeredBy"). The render guards on `len(by) > 0`; a whitespace-only value
+  renders nothing. Verified the ONLY unguarded untrusted index: parseSystemdVersion
+  and parseUnitList both length-check before `f[0]`, and wrapWords' `parts[0]`
+  is on already-sanitized non-empty text. Regression: TestTriggeredByNeverPanics
+  (eight shapes × split/full, no panic, correct render). Both agents
+  runtime-reproduced the original panic.
+
+#### [ ] UT-033 — Bound the live journal buffer by bytes, not only lines
+
+- **Status:** Pending review
+- **Confidence:** High — reproduced by runtime probe (1.2 GiB from 300 lines)
+- **Evidence:** `model.go:354-368` trims `m.logs` by count only
+  (`maxLogLines` 20000 + `logTrimSlack` 2048); `journal.go:904` allows a
+  4 MiB per-entry cap in follow mode with no aggregate byte accounting
+  (`maxPageBytes` 16 MiB protects only `runFinite`); the parsed-line channel
+  (`journal.go:697`, 512 deep) and batch channel (`startJournal`, 64 deep)
+  are also byte-unbounded. Rendering compounds it: a single ~4 MiB entry is
+  fully grapheme-wrapped by `countDisplayLines`→`logSegments`→`wrapWords`
+  every frame (view.go:127-134, 1306-1331; format.go:118-121).
+- **Impact:** A monitored unit (or hostile `-H` remote) emitting multi-MiB
+  entries drives multi-GiB retention → OOM, and a single large entry makes
+  every `View()` cost ~530 ms — a CPU freeze. This is the live-model byte
+  bound explicitly deferred in the UT-003 commit; this item supersedes that
+  deferral.
+- **Suggested resolution:** A per-entry DISPLAY byte cap far below 4 MiB
+  (a screen shows a few KiB), plus aggregate byte trimming next to the line
+  trim, byte-bounded live queues, and per-line wrapped-height memoization so
+  a large entry is not re-wrapped every frame. Byte accounting must count
+  SANITIZED bytes (tab/C0 expansion) and combine all `logLine` string fields.
+- **Regression coverage:** test-injectable small budgets (never allocate
+  real GiB); uneven-size floods across cap-1/cap/cap+1; assert oldest-trim,
+  follow/scroll invariants, honest marker, no queued path exceeds the budget
+  by more than one explicitly bounded record; a safe benchmark showing a
+  max-size entry is not re-wrapped every frame.
+- **Review outcome:** _Pending._
+
+#### [ ] UT-034 — Bound poll and action command output by bytes
+
+- **Status:** Pending review
+- **Confidence:** High
+- **Evidence:** Every poll/action path buffers the child's whole stdout with
+  no byte cap via `Cmd.Output()` / `CombinedOutput()`:
+  `collect.go:225` (`systemctl show`), `:351` (version), `:370` (list-units),
+  `:395` (the remote `sh -c` framed poll), `actions.go:69` (90 s action), and
+  `journal.go:297` (the `date +%s` clock probe). Only the journal reads
+  (`runFinite`) were bounded (UT-003/013).
+- **Impact:** A hostile/compromised `-H` endpoint answering the poll or an
+  action with a fast unbounded stream buffers gigabytes (≈2.5 GB at 100 MB/s
+  over the 25 s poll, ≈9 GB over the 90 s action, unbounded on the
+  deadline-less probe) — every poll interval. Timeouts bound duration, not
+  bytes.
+- **Suggested resolution:** One streamed bounded-output primitive (the
+  `runFinite` machinery is the in-repo precedent): drain excess so the child
+  cannot block, always wait/reap, surface an explicit oversized/truncated
+  error rather than a malformed parse, and keep a small separate cap for
+  useful first stderr diagnostics.
+- **Regression coverage:** local + fake-SSH remote for version, list-units,
+  framed base poll, detailed show, clock probe, and action `CombinedOutput`;
+  stdout and stderr independently at cap-1/cap/cap+1; endless finite-rate
+  flood until cancellation; child cannot block on a full pipe; PID gone when
+  the command returns; explicit error surfaced. No real-GB fixtures.
+- **Review outcome:** _Pending._
+
+### P2 — hardening / reliability
+
+#### [ ] UT-035 — Give journal phase-one a deadline
+
+- **Status:** Pending review
+- **Confidence:** High — not a leak/deadlock; a user-recoverable stall
+- **Evidence:** `journal.go:297` (remote clock probe) and `:309`
+  (`readBacklog`) run on the stream ctx, rooted at `context.Background()`
+  (model.go) with NO timeout — unlike `fetchOlder`'s 30 s (`journal.go:104`).
+- **Impact:** A remote that accepts the session but never emits output
+  (application-level stall; `ServerAliveInterval` only catches dead
+  transport) pins the pane on "reading the journal…" forever — the stream
+  never starts and never dies, so dead-stream recovery never fires. Only the
+  follow tail should be unbounded.
+- **Suggested resolution:** `context.WithTimeout` around the probe and
+  backlog, matching `fetchOlder`.
+- **Regression coverage:** fake journalctl + fake ssh that connect then block
+  in (a) `date +%s`, (b) backlog stdout, (c) backlog stderr/Wait: require a
+  finite phase-one deadline, a visible terminal batch, dead-stream
+  retirement/retry without a hot loop, direct-child ESRCH before teardown
+  returns; a healthy slow response below the deadline still succeeds and
+  follow mode stays long-lived.
+- **Review outcome:** _Pending._
+
+#### [ ] UT-038 — Harden the release/CI workflows
+
+- **Status:** Pending review
+- **Confidence:** High — supply-chain / release-integrity hardening
+- **Evidence:** `.github/workflows/release.yml` grants `contents: write`,
+  pins actions only by mutable major tags (`actions/checkout@v7`,
+  `setup-go@v7`, `cachix/install-nix-action@v31`; likewise in `ci.yml`), and
+  uses `workflow_dispatch.inputs.tag` as both the checkout `ref` and the
+  `gh release create` name with no `--verify-tag` and no existing-tag proof.
+- **Impact:** A compromised action tag runs with write scope; an authorized
+  but mistaken dispatch can build one ref and create/mislabel a release tag.
+- **Suggested resolution:** Pin every `uses:` to a reviewed full commit SHA;
+  scope release permissions to only what is required; reject non-`v*` /
+  branch / SHA / missing-tag dispatch inputs; assert the checked-out commit
+  equals dereferenced `refs/tags/$TAG`; publish with `--verify-tag`.
+- **Regression coverage:** `actionlint` (and `zizmor` if available) plus
+  static tests for SHA-pinning, scoped permissions, dispatch-input validation,
+  tag-equals-checkout, and `--verify-tag`; annotated and lightweight existing
+  tags exercised without publishing.
+- **Review outcome:** _Pending._
+
+### P3 — correctness
+
+#### [ ] UT-039 — The help screen must own its input
+
+- **Status:** Pending review
+- **Confidence:** High — modal state-corruption, not a security vuln
+- **Evidence:** `handleKey` dispatches the whole command switch before its
+  `m.help` branch (model.go:653), and `handleMouse` (model.go:427) has no
+  help guard. The help footer advertises only scroll/close/quit
+  (view.go:1526-1535).
+- **Impact:** With help open, Enter toggles/collapses the hidden row,
+  table/log keys mutate hidden state, `x` opens the action menu, and the
+  wheel/clicks drive the hidden table/log/menu behind the overlay. State
+  corruption behind a modal screen (the menu does become visible, so it is
+  not a silent destructive action).
+- **Suggested resolution:** Route all input through the help branch first —
+  allow only its documented keys, map the wheel to `helpScroll` with
+  clamping, and drop everything else.
+- **Regression coverage:** with help open, snapshot every pane/model field
+  and feed all normal command keys plus left/right/header/right clicks and
+  wheel; only documented close/quit/scroll may act; assert no
+  poll/action/journal command returned and no hidden state change; cover
+  too-short and full-height help at min/wide geometries.
+- **Review outcome:** _Pending._
+
 ## Review process
 
 For each item, replace `_Pending._` with one of:
