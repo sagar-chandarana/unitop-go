@@ -720,13 +720,35 @@ func (m model) tableTitle(width int) string {
 // out of it.
 func (m model) logTitle(width int) string {
 	head := stColHead.Render("log")
-	if u, ok := m.selectedUnit(); ok {
-		head += " " + stBase.Render(shortUnit(u.Name))
+	if name, ok := m.logUnitName(); ok {
+		head += " " + stBase.Render(shortUnit(name))
 	}
 	if m.logFilt.empty() {
 		return head
 	}
 	return fitTitle(head, width, m.logFilt.label(), "filtered")
+}
+
+// logUnitName is the unit whose log lines are actually on screen: the open
+// stream's, so the title names the lines' unit even in the brief window after a
+// wheel scroll moved the selection but before the settle switched the stream.
+// Before any stream — a fresh or slice selection — it falls back to the
+// selection, so a just-selected unit is still named while its first lines are
+// on the way.
+func (m model) logUnitName() (string, bool) {
+	if m.journal != nil {
+		return m.journal.unit, true
+	}
+	// A stream that ended on its own leaves its lines on screen until recovery;
+	// name them by the unit they came from — recorded when it died — not by a
+	// selection a later wheel scroll may have moved onto.
+	if len(m.logs) > 0 && m.journalDiedUnit != "" {
+		return m.journalDiedUnit, true
+	}
+	if u, ok := m.selectedUnit(); ok {
+		return u.Name, true
+	}
+	return "", false
 }
 
 // fitTitle appends the longest of the given descriptions that still fits in the

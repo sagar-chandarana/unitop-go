@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -153,6 +154,115 @@ func TestWheelOverLogDoesNotTouchTheSettle(t *testing.T) {
 
 	if stream != nil {
 		stream.stopAndWait()
+	}
+}
+
+// During the settle window the selection has moved but the log lines still
+// belong to the streamed unit, so the log pane title must name the streamed
+// unit — not the not-yet-loaded selection — or it labels one unit's logs with
+// another's name.
+func TestLogTitleNamesTheStreamedUnitDuringSettle(t *testing.T) {
+	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
+	m.width, m.height, m.ready = 140, 30, true
+	m.connected = true
+	m.units = testUnits()
+	m.rebuild()
+
+	m.cursor = firstUnitRow(t, &m)
+	if cmd := m.afterCursorMove(); cmd == nil {
+		t.Fatal("no stream started for the first selected unit")
+	}
+	streamed := m.journal
+	if streamed == nil {
+		t.Fatal("afterCursorMove did not open a journal")
+	}
+
+	// Seed an unmistakable line that belongs to the streamed unit, so the test
+	// checks a real rendered line under the title, not the helper over an empty
+	// buffer.
+	const oldLine = "STREAMED-UNIT-LINE-42"
+	m.logs = append(m.logs, logLine{ts: time.Now(), prio: 6, msg: oldLine})
+	m.logFollow, m.logScroll = true, 0
+	m.logEpoch++
+
+	// Wheel to a different unit; the journal is deferred, so the lines on screen
+	// still belong to the streamed unit.
+	m.handleMouse(tea.MouseMsg{Button: tea.MouseButtonWheelDown, X: 0})
+	if m.journal != streamed {
+		t.Fatal("the wheel notch restarted the journal instead of deferring")
+	}
+	sel, ok := m.selectedUnit()
+	if !ok || sel.Name == streamed.unit {
+		t.Fatalf("the selection did not move to a different unit: %+v", sel)
+	}
+
+	// The title names the streamed unit, not the unloaded selection...
+	title := m.logTitle(80)
+	if !strings.Contains(title, shortUnit(streamed.unit)) {
+		t.Errorf("log title should name the streamed unit %q, got %q", streamed.unit, title)
+	}
+	if strings.Contains(title, shortUnit(sel.Name)) {
+		t.Errorf("log title named the unloaded selection %q; its logs are not on screen yet: %q", sel.Name, title)
+	}
+	// ...and the streamed unit's actual line is what is rendered beneath it.
+	rendered := strings.Join(m.renderLogWindow(80, m.logHeight()), "\n")
+	if !strings.Contains(rendered, oldLine) {
+		t.Errorf("the streamed unit's line should be on screen under its own title, rendered:\n%s", rendered)
+	}
+
+	m.journal.stopAndWait()
+}
+
+// A stream that ends on its own retains its lines and records its identity in
+// journalDiedUnit. If the wheel then moves the selection before recovery, the
+// log title must still name the dead unit those retained lines came from — not
+// the new selection.
+func TestLogTitleNamesTheDeadUnitWhoseLinesRemain(t *testing.T) {
+	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
+	m.width, m.height, m.ready = 140, 30, true
+	m.connected = true
+	m.units = testUnits()
+	m.rebuild()
+
+	m.cursor = firstUnitRow(t, &m)
+	if cmd := m.afterCursorMove(); cmd == nil {
+		t.Fatal("no stream started for the first selected unit")
+	}
+	deadUnit := m.journal.unit
+
+	// A distinctive line arrives, then the stream ends on its own.
+	const deadLine = "DEAD-STREAM-LINE-7"
+	m.logs = append(m.logs, logLine{ts: time.Now(), prio: 6, msg: deadLine})
+	m.logFollow, m.logScroll = true, 0
+	m.logEpoch++
+	m.Update(journalBatch{gen: m.logGen, done: true})
+	if m.journal != nil {
+		t.Fatal("the done batch did not retire the stream")
+	}
+	if m.journalDiedUnit != deadUnit {
+		t.Fatalf("the dead unit identity was not recorded: %q", m.journalDiedUnit)
+	}
+	if len(m.logs) == 0 {
+		t.Fatal("the dead stream's lines should be retained")
+	}
+
+	// The wheel moves the selection while the dead lines are still on screen.
+	m.handleMouse(tea.MouseMsg{Button: tea.MouseButtonWheelDown, X: 0})
+	sel, _ := m.selectedUnit()
+	if sel.Name == deadUnit {
+		t.Fatal("the selection did not move off the dead unit")
+	}
+
+	if name, _ := m.logUnitName(); name != deadUnit {
+		t.Errorf("the retained lines should be named by their dead unit %q, got %q", deadUnit, name)
+	}
+	title := m.logTitle(80)
+	if !strings.Contains(title, shortUnit(deadUnit)) || strings.Contains(title, shortUnit(sel.Name)) {
+		t.Errorf("title should name the dead unit %q, not the selection %q: %q", deadUnit, sel.Name, title)
+	}
+	rendered := strings.Join(m.renderLogWindow(80, m.logHeight()), "\n")
+	if !strings.Contains(rendered, deadLine) {
+		t.Errorf("the dead unit's line should still be on screen under its name, rendered:\n%s", rendered)
 	}
 }
 

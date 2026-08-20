@@ -32,6 +32,10 @@ to change.
   each unit the pointer flew past. Now the selection tracks the wheel at once
   but the log waits for the scroll to settle before it fetches, so only the
   unit you land on is opened.
+- **The log pane names the unit whose lines it is showing.** In that brief
+  moment after a wheel scroll, before the log catches up to the highlight, the
+  pane used to show the new unit's name over the previous unit's lines. It now
+  names the unit the lines actually belong to until the new one loads.
 - **The help screen no longer lets keys and clicks fall through to the
   hidden panes.** With help open, pressing enter, a sort key, or the action
   key — or scrolling and clicking with the mouse — used to drive the table,
