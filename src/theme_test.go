@@ -51,3 +51,19 @@ func TestHeatRamps(t *testing.T) {
 		}
 	}
 }
+
+// The sorted column says which way it is sorted twice over — the arrow and the
+// colour — so the colour must actually differ with direction, and must stay in
+// the palette like every other one.
+func TestSortStyleShowsDirection(t *testing.T) {
+	desc, asc := sortStyle(false), sortStyle(true)
+	if desc.GetForeground() != colRed {
+		t.Errorf("high to low should be red, got %v", desc.GetForeground())
+	}
+	if asc.GetForeground() != colGreen {
+		t.Errorf("low to high should be green, got %v", asc.GetForeground())
+	}
+	if !desc.GetBold() || !asc.GetBold() {
+		t.Error("the sorted column is the bold one, whichever way it sorts")
+	}
+}

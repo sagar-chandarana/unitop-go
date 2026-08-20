@@ -8,6 +8,20 @@ to change.
 
 ## [Unreleased]
 
+### Changed
+
+- **The host name is cyan** — in the header and on the connecting screen — the
+  one heading that carries a colour, because it answers which machine you are
+  looking at.
+- **The sorted column's title now says which way it sorts**: red for high to
+  low, green for low to high, in the table and in the header's `sort` chip.
+- **Colour is back everywhere it costs nothing to read.** The filter is yellow
+  and bold again; the focused pane frame, the menu box, the spinners and the
+  editor caret are magenta again; the rules and the unfocused frame are grey
+  again. What stays colourless is what you have to read — headings, the host
+  name, column titles, labels, timestamps, idle values, unit names and log
+  lines — because those are the ones a theme can render unreadably.
+
 ### Fixed
 
 - **The help screen no longer lets keys and clicks fall through to the

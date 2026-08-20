@@ -28,12 +28,24 @@ there. This is not a bug in either theme — an ANSI index is a name, not a
 promise about contrast, which is exactly why unitop names indices in the first
 place.
 
-The consequence, now enforced in `theme.go`: **hue is only ever semantic, and
-structure is carried by weight.** Headings, the sorted column, the focused
-frame and the filter are bold on the default foreground; rules, timestamps,
-labels and idle values are that foreground dimmed (SGR 2). A terminal that
-ignores SGR 2 flattens the hierarchy but keeps every word legible — the right
-way round to fail — whereas colour 8 fails closed.
+The consequence, now enforced in `theme.go`: **colour never carries anything
+you have to read.** Headings, the host name, column titles, labels,
+timestamps, idle values, unit and slice names and log lines are the default
+foreground — bold for emphasis, faint for below notice (SGR 2). A terminal
+that ignores SGR 2 flattens the hierarchy but keeps every word legible, the
+right way round to fail; colour 8 fails closed.
+
+The host name is cyan and bold — the one heading with a hue, because it answers
+which machine you are looking at, and it is short and always in the same corner.
+
+Colour is kept everywhere it costs nothing: magenta for the focused frame,
+the menu box, the spinners and the editor caret, colour 8 for the rules and
+the unfocused frame — decoration that may vanish on a theme without loss,
+since the focused frame is a heavier glyph too. The filter is yellow bold by
+explicit choice even though it is words; it was made colourless once and put
+back. The sorted column title is red for high-to-low and green for
+low-to-high (`sortStyle()`), the one place those two mean a direction rather
+than health — the arrow says it as well, so the colour is never load-bearing.
 
 `heat()` and `stateStyle()` return a `lipgloss.Style` rather than a colour for
 this reason: their quietest step has no colour of its own.

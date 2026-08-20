@@ -200,18 +200,30 @@ These are decisions, not accidents. Change them deliberately, not incidentally.
   unitop matches the rest of their terminal and needs no light/dark handling.
   Never write a hex value or a 256-colour index: it would override the theme
   and force the light/dark problem back in.
-- **Colour is only ever semantic; structure is carried by weight.** Five hues
-  mean something — green healthy, yellow watch, red wrong, cyan
-  finished-or-rate, blue keys — and everything else is the terminal's own
-  foreground, bold for emphasis and faint for anything below notice.
-  Headings, the sorted column, the focused frame and the filter used magenta,
-  yellow and colour 8; all three are unreadable on some real theme (magenta
-  1.65:1 and yellow 1.73:1 on a light one, colour 8 1.71:1 on a dark one),
-  and the theme is entitled to that — an index is a name, not a promise about
-  contrast. Only the foreground the user already reads everything else in is
-  safe everywhere. The measurements are in the `theme.go` header; a terminal
-  that ignores SGR 2 loses the hierarchy but keeps every word legible, which
-  is the right way round to fail.
+- **Colour never carries anything you have to read.** Five hues mean
+  something — green healthy, yellow watch, red wrong, cyan finished-or-rate,
+  blue keys — and two more are decoration only, never text: magenta draws the
+  focused frame, the menu box, the spinners and the caret, colour 8 draws the
+  rules and the unfocused frame. Both are nearly invisible on some real theme
+  and nothing is lost when they are, because a focused frame is also a heavier
+  glyph. Everything there is to read — headings, column titles, labels,
+  timestamps, idle values, unit and slice names, log lines — is the terminal's
+  own foreground, bold for emphasis and faint for below notice. The host name
+  is the one exception among headings: cyan and bold wherever it appears, header
+  and startup screen alike, because it answers which machine you are looking at
+  and is short and always in the same place.
+  Measured on two real themes, magenta is 1.65:1 and yellow 1.73:1 on a light
+  one and colour 8 is 1.71:1 on a dark one; an ANSI index is a name, not a
+  promise about contrast, and the theme is entitled to that. The numbers are
+  in the `theme.go` header. A terminal that ignores SGR 2 loses the hierarchy
+  but keeps every word legible, which is the right way round to fail.
+- **The filter is the one deliberate exception**: yellow, bold, and words.
+  A filter is a mode you have to notice you are in. It was made colourless
+  once and put back on request — leave it.
+- **The sorted column's title is red for high-to-low and green for
+  low-to-high** (`sortStyle()`), in the table and in the header's `sort`
+  chip. This is the one place red and green are a direction rather than
+  health; the arrow says the same thing, so nothing depends on the colour.
 - Magnitudes ramp through five steps via `heat()` — dim, green, yellow,
   orange, red — where orange is bright yellow, the one step that has no hue
   of its own. State comes from `stateStyle()`. Both return a **style**, not a

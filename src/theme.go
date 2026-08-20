@@ -7,39 +7,62 @@ import "github.com/charmbracelet/lipgloss"
 // says it is, so unitop matches the rest of their terminal and needs no
 // light/dark handling of its own.
 //
-// Colour is only ever *semantic* here. Five hues carry meaning:
+// Colour never carries something you have to *read*. Five hues carry meaning:
 //
-//	green   healthy, running
-//	yellow  in transition, or a number worth watching
-//	red     failed, or a number that is too high
+//	green   healthy, running — and a column sorted low to high
+//	yellow  in transition, a number worth watching, and the active filter
+//	red     failed, a number that is too high — and sorted high to low
 //	cyan    finished cleanly, and rates
 //	blue    keys and interactive hints
 //
-// Structure — headings, the sorted column, the focused frame, the filter —
-// is carried by *weight* instead: bold against faint, both on the terminal's
-// own foreground. That is not a stylistic preference, it is the only thing
-// that survives an arbitrary theme. Measured across two real ones:
+// The host name is cyan: it is the one heading that answers "which machine am I
+// looking at", it is short, bold and always in the same corner, so the hue is
+// worth the risk that a theme renders cyan weakly. Every other heading is
+// colourless.
+//
+// The host name is cyan: it is the one heading that answers "which machine am
+// I looking at", it is short, bold, and always in the same corner, so the hue
+// is worth what a weak cyan costs. Every other heading is colourless.
+//
+// Two more are decoration only, never text: magenta draws the focused frame,
+// the menu box, the spinners and the editor caret, and colour 8 draws the
+// rules and the unfocused frame. Both may be nearly invisible on some theme
+// and nothing is lost when they are — a frame is also a heavier glyph than
+// the unfocused one, and the sort arrow says the direction the colour shows.
+//
+// What must be read — headings, the host name, column titles, labels,
+// timestamps, idle values, unit and slice names, log lines — is the
+// terminal's own foreground: bold for emphasis, faint for below notice.
+// That is not a stylistic preference, it is the only thing that survives an
+// arbitrary theme. Measured across two real ones:
 //
 //	                 duskfox  latte
-//	magenta (5)         7.47   1.65   was headings and the focused frame
-//	yellow (3)          9.55   1.73   was the filter
-//	grey (8)            1.71   4.37   was every rule, frame and idle value
-//	default foreground 11.86   7.06   what all three became
+//	magenta (5)         7.47   1.65   frames and spinners — decoration
+//	yellow (3)          9.55   1.73   warnings, and the filter
+//	grey (8)            1.71   4.37   rules and the unfocused frame
+//	default foreground 11.86   7.06   everything there is to read
 //
 // Contrast against each theme's own background. A palette entry can fail on
 // either side — pale colours meant for a dark ground wash out on a light one,
-// and 8 is dark enough to be a background shade on a dark one — so anything
-// that must be *read* takes the foreground the user already reads everything
-// else in. Anything below notice is that same foreground, dimmed.
+// and 8 is dark enough to be a background shade on a dark one — which is why
+// what must be read takes the foreground the user already reads everything
+// else in, and why the two weakest hues are only ever decoration.
+//
+// The filter is the deliberate exception: it is yellow and it is words, so on
+// a light theme carrying a dark theme's palette it will be pale. That is a
+// choice — a filter is a mode you have to notice you are in, the pane it
+// applies to is titled with it, and it is bold besides.
 //
 // Never write a hex value or a 256-colour index: it would override the theme
 // and force the light/dark problem back in.
 var (
 	colDefault = lipgloss.NoColor{}   // the terminal's own foreground
+	colGrey    = lipgloss.Color("8")  // rules and frames only — never text
 	colRed     = lipgloss.Color("1")  //
 	colGreen   = lipgloss.Color("2")  //
 	colYellow  = lipgloss.Color("3")  //
 	colBlue    = lipgloss.Color("4")  //
+	colMagenta = lipgloss.Color("5")  // frames and spinners only — never text
 	colCyan    = lipgloss.Color("6")  //
 	colOrange  = lipgloss.Color("11") // bright yellow: the heat step above yellow
 	colSelBg   = lipgloss.Color("6")  // the selected row: black on cyan, as htop
@@ -53,20 +76,36 @@ var (
 // that ignores SGR 2 loses the hierarchy but keeps every word legible, which is
 // the right way round to fail.
 var (
-	stBase    = lipgloss.NewStyle()
-	stFaint   = lipgloss.NewStyle().Faint(true)
-	stHeader  = lipgloss.NewStyle().Bold(true)
-	stColHead = lipgloss.NewStyle() // plain: the sorted column is the one with weight
-	stSortCol = lipgloss.NewStyle().Bold(true)
-	stAccent  = lipgloss.NewStyle().Foreground(colCyan)
-	stKey     = lipgloss.NewStyle().Foreground(colBlue)
-	stAlert   = lipgloss.NewStyle().Foreground(colRed)
-	stBad     = lipgloss.NewStyle().Foreground(colRed).Bold(true)
-	stWarn    = lipgloss.NewStyle().Foreground(colYellow)
-	stGood    = lipgloss.NewStyle().Foreground(colGreen)
-	stBorder  = lipgloss.NewStyle().Faint(true)
-	stFilter  = lipgloss.NewStyle().Bold(true)
+	stBase     = lipgloss.NewStyle()
+	stFaint    = lipgloss.NewStyle().Faint(true)
+	stHeader   = lipgloss.NewStyle().Bold(true)
+	stHost     = lipgloss.NewStyle().Foreground(colCyan).Bold(true)
+	stColHead  = lipgloss.NewStyle() // plain: the sorted column is the one with weight
+	stSortDesc = lipgloss.NewStyle().Foreground(colRed).Bold(true)
+	stSortAsc  = lipgloss.NewStyle().Foreground(colGreen).Bold(true)
+	stAccent   = lipgloss.NewStyle().Foreground(colCyan)
+	stKey      = lipgloss.NewStyle().Foreground(colBlue)
+	stAlert    = lipgloss.NewStyle().Foreground(colRed)
+	stBad      = lipgloss.NewStyle().Foreground(colRed).Bold(true)
+	stWarn     = lipgloss.NewStyle().Foreground(colYellow)
+	stGood     = lipgloss.NewStyle().Foreground(colGreen)
+	stBorder   = lipgloss.NewStyle().Foreground(colGrey).Faint(true)
+	stFrame    = lipgloss.NewStyle().Foreground(colMagenta)
+	stFilter   = lipgloss.NewStyle().Foreground(colYellow).Bold(true)
 )
+
+// sortStyle colours the sorted column's title by which way it is sorted —
+// red for high to low, green for low to high — so the direction is legible
+// from the colour as well as from the arrow beside it. This is the one place
+// red and green are a direction rather than health; everywhere else they keep
+// their usual meaning, and nothing here is worse off if the colours are
+// missed, because the arrow already says it.
+func sortStyle(reverse bool) lipgloss.Style {
+	if reverse {
+		return stSortAsc
+	}
+	return stSortDesc
+}
 
 // heat ramps a magnitude across five steps, coolest to hottest:
 //

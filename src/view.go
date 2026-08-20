@@ -307,15 +307,22 @@ func (m model) viewStartup() []string {
 
 	if m.err == "" {
 		frame := string(spinnerFrames[m.spinner%len(spinnerFrames)])
-		what := "reading systemd on " + target
+		lead := "reading systemd on "
 		if m.r.host != "" {
-			what = "connecting to " + target
+			lead = "connecting to "
 		}
 		// The spinner and its two spaces are three cells the host name cannot
 		// have; a long one is otherwise exactly what pushes this off the edge.
+		// Truncate the plain string, then colour what survived — the host name
+		// is the tail, so a narrow terminal eats it from the right and the
+		// split can land inside the lead.
+		line := truncRunes(lead+target+"…", max(6, m.width-3))
+		said := stBase.Render(line)
+		if len(line) > len(lead) {
+			said = stBase.Render(lead) + stHost.Render(line[len(lead):])
+		}
 		body = append(body,
-			stBase.Render(frame)+"  "+
-				stBase.Render(truncRunes(what+"…", max(6, m.width-3))),
+			stFrame.Render(frame)+"  "+said,
 			"",
 			stFaint.Render("q  quit"),
 		)
@@ -540,7 +547,7 @@ func (m model) viewHost() []string {
 		}
 	}
 
-	name := stHeader.Render(m.hostLabel)
+	name := stHost.Render(m.hostLabel)
 	if m.r.host != "" {
 		name += stFaint.Render(" (ssh)")
 	}
@@ -570,7 +577,7 @@ func (m model) viewHost() []string {
 			heat(h.SwapPct(), 1, 20, 50, 80).Render(humanBytes(h.SwapUsed)))
 	}
 	usage = append(usage, stFaint.Render("net ")+
-		lipgloss.NewStyle().Foreground(colCyan).Render("↓"+humanRateFull(h.NetIn)+" ↑"+humanRateFull(h.NetOut)))
+		stAccent.Render("↓"+humanRateFull(h.NetIn)+" ↑"+humanRateFull(h.NetOut)))
 
 	units := fmt.Sprintf("%s%s%s units",
 		stGood.Render(fmt.Sprint(active)), stFaint.Render("/"), stFaint.Render(fmt.Sprint(len(m.units))))
@@ -582,7 +589,7 @@ func (m model) viewHost() []string {
 	if m.reverse {
 		arrow = "↑"
 	}
-	mode := []string{stFaint.Render("sort ") + stHeader.Render(m.sortBy.String()+arrow)}
+	mode := []string{stFaint.Render("sort ") + sortStyle(m.reverse).Render(m.sortBy.String()+arrow)}
 	if m.tree {
 		mode = append(mode, stAccent.Render("tree"))
 	}
@@ -664,7 +671,7 @@ func framed(body []string, w, h int, title string, focused bool) []string {
 	st := stBorder
 	if focused {
 		tl, tr, bl, br, hz, edge = "┏", "┓", "┗", "┛", "━", "┃"
-		st = stBase
+		st = stFrame
 	}
 
 	head, used := st.Render(tl+hz), 2
@@ -782,7 +789,7 @@ func (m model) viewTable(width, height int) []string {
 			cell = padLeft(t, c.width)
 		}
 		if c.key == m.sortBy {
-			head = append(head, stSortCol.Render(cell))
+			head = append(head, sortStyle(m.reverse).Render(cell))
 		} else {
 			head = append(head, stColHead.Render(cell))
 		}
@@ -1253,7 +1260,7 @@ func (m model) emptyLogNotice() []string {
 		// Only for the moment before the first entries land, so a slow remote
 		// does not flash "nothing matches" and then fill in.
 		frame := string(spinnerFrames[m.spinner%len(spinnerFrames)])
-		return []string{stBase.Render(frame) +
+		return []string{stFrame.Render(frame) +
 			stFaint.Render(" reading the journal…")}
 
 	case !m.logFilt.empty():
@@ -1279,7 +1286,7 @@ func (m model) logTopMarker(width int) string {
 	switch {
 	case m.loadingOlder:
 		frame := string(spinnerFrames[m.spinner%len(spinnerFrames)])
-		return stBase.Render(frame) +
+		return stFrame.Render(frame) +
 			stWarn.Render(" loading earlier entries…")
 	case m.logLoadErr != "":
 		return stBad.Render("── could not load earlier entries: ") +
@@ -1484,7 +1491,7 @@ func (m model) menuBox() []string {
 	// draws exactly the viewport menuGeometry chose, and says when there is
 	// more above or below it.
 	_, _, w, first, visible := m.menuGeometry()
-	border := stBase
+	border := stFrame
 	title := " " + truncRunes(shortUnit(m.menu.unit), w-3-4) + " "
 	if first > 0 {
 		title = fmt.Sprintf(" ↑%d%s", first, title)
@@ -1586,7 +1593,7 @@ func (m model) viewFooter() string {
 		if m.filterLogs {
 			long, short, text = "show journal lines matching", "search log:", m.logFilt.grep
 		}
-		caret := stBase.Render("▏")
+		caret := stFrame.Render("▏")
 		typed := stFilter.Render(text)
 		for _, v := range []struct {
 			label string
