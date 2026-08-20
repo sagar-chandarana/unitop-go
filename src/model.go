@@ -166,16 +166,25 @@ type model struct {
 }
 
 func newModel(r runner, hostLabel string, interval time.Duration, sortBy sortKey, reverse, showAll, tree bool, filter string) model {
+	// Both -f and -H (or the local hostname) are terminal-bound input like
+	// any other: they end up rendered, and nothing upstream vets them.
+	label := sanitizeText(hostLabel)
+	if label == "" && r.host != "" {
+		// A raw -H that was nothing but a dropped escape sequence sanitizes
+		// to an empty label; the screens still need a name for the far end.
+		// Remote-ness itself stays keyed on r.host.
+		label = "remote"
+	}
 	return model{
 		r:         r,
 		col:       NewCollector(r),
-		hostLabel: hostLabel,
+		hostLabel: label,
 		interval:  interval,
 		sortBy:    sortBy,
 		reverse:   reverse,
 		showAll:   showAll,
 		tree:      tree,
-		filter:    filter,
+		filter:    sanitizeText(filter),
 		collapsed: map[string]bool{},
 		totals:    &logTotals{epoch: -1},
 		logFollow: true,
@@ -364,7 +373,25 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// quit is the one way out: every gesture that leaves the program goes
+// through it, so no journalctl — local, or at the far end of an ssh
+// connection — outlives the screen it was feeding.
+func (m *model) quit() (tea.Model, tea.Cmd) {
+	// The waiting variant: by the time the quit is returned, every child is
+	// reaped and the channel closed — nothing outlives the screen.
+	m.journal.stopAndWait()
+	return m, tea.Quit
+}
+
 func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Ctrl-C quits from anywhere, checked before every modal dispatch below —
+	// the menu used to swallow it as an unknown key, and the filter editor
+	// quit without stopping the journal. Matched by TYPE, not String(): a
+	// pasted ETX arrives inside KeyRunes and is sanitized, not obeyed.
+	if msg.Type == tea.KeyCtrlC {
+		return m.quit()
+	}
+
 	// On a terminal too small to draw, the only thing on screen is the notice
 	// saying so — and it says q quits. It has to, whatever was open when the
 	// window shrank: with the filter editor up, q was a character to type, and
@@ -372,9 +399,8 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// be what the key means.
 	if m.width < minWidth || m.height < minHeight {
 		switch msg.String() {
-		case "q", "ctrl+c", "esc":
-			m.journal.stop()
-			return m, tea.Quit
+		case "q", "esc":
+			return m.quit()
 		}
 		return m, nil
 	}
@@ -383,8 +409,8 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// act on, so only quitting and retrying mean anything.
 	if !m.connected {
 		switch msg.String() {
-		case "q", "ctrl+c", "esc":
-			return m, tea.Quit
+		case "q", "esc":
+			return m.quit()
 		case "R", "enter":
 			// An explicit retry clears a fatal verdict: the user may have just
 			// upgraded systemd on the other end.
@@ -424,15 +450,17 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlU:
 			*text = ""
 		case tea.KeyRunes:
-			*text += string(msg.Runes)
+			// A bracketed paste is one KeyRunes event carrying whatever was
+			// on the clipboard — newlines, C0 controls, whole escape
+			// sequences. Rendered raw by the editor and the header they
+			// move the cursor and repaint the screen; see sanitize.go.
+			*text += sanitizeText(string(msg.Runes))
 		case tea.KeySpace:
 			// A real decoded space carries Runes == " "; a synthetic event may
 			// carry none. Appending the runes AND a literal space put two
 			// spaces in per press, silently changing what the filter matches
 			// ("timed out" searched for "timed  out"). Exactly one, either way.
 			*text += " "
-		case tea.KeyCtrlC:
-			return m, tea.Quit
 		default:
 			return m, nil
 		}
@@ -455,9 +483,8 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "q", "ctrl+c":
-		m.journal.stop()
-		return m, tea.Quit
+	case "q":
+		return m.quit()
 	case "?":
 		m.help = !m.help
 		m.helpScroll = 0 // it always opens at the top
@@ -769,7 +796,7 @@ func (m *model) loadOlder() tea.Cmd {
 	// holding a journalctl open, and a remote one at the far end of the ssh
 	// connection, for an answer that would be thrown away on arrival.
 	return tea.Batch(
-		fetchOlder(m.journal.ctx, m.r, m.journal.unit, oldest, m.logFilt, journalBacklog, m.logGen),
+		fetchOlder(m.journal, m.r, m.journal.unit, oldest, m.logFilt, journalBacklog, m.logGen),
 		spinnerTickCmd(),
 	)
 }
@@ -1051,7 +1078,11 @@ func (m *model) syncJournal() tea.Cmd {
 	if m.journal != nil && m.journal.unit == want && m.journal.filter == m.logFilt {
 		return nil
 	}
-	m.journal.stop()
+	// The waiting variant here too: this is the only place a stream's last
+	// pointer is dropped, and the ownership promise — no child outlives us —
+	// has to hold on this path as much as at exit. Costs a millisecond or
+	// two of navigation latency while the old follow is reaped.
+	m.journal.stopAndWait()
 	m.journal = nil
 	m.logs = nil
 	m.logEpoch++

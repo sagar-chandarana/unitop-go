@@ -39,9 +39,9 @@ hardening opportunity.
 - **Reference:** [systemd v251 release notes](https://github.com/systemd/systemd/releases/tag/v251)
 - **Review outcome:** Accepted and implemented (triage Codex/GPT-5, implementation Claude Code/Fable 5, 2026-08-20; commit "Refuse systemd 247-250 up front, and make the refusal honest"). Triage pinned the true floor: v250 advertises --timestamp with only pretty/us/utc/us+utc; the v251 release notes introduce the unix choice. minSystemd is 251 (raised, per triage, rather than adding an old-format parser); README, messages and tests updated. Regressions: TestCheckVersion (229/247/250 rejected, 251+ accepted) and TestLocalProbeRetriesAndCachesThroughUpgrades asserts the detailed show argv still opens with exactly [show --timestamp=unix].
 
-#### [ ] UT-002 — Sanitize filter text before it reaches the terminal
+#### [x] UT-002 — Sanitize filter text before it reaches the terminal
 
-- **Status:** Pending review
+- **Status:** Accepted — implemented
 - **Confidence:** High
 - **Evidence:** `src/model.go:396-423` appends arbitrary `KeyRunes` directly.
   Bubble Tea bracketed-paste events can contain newlines and terminal control
@@ -54,8 +54,10 @@ hardening opportunity.
   filters at ingestion. Keep the journalctl value as one argument; this is a
   terminal-safety issue, not shell injection.
 - **Regression coverage:** Paste multiline text, C0 controls, ESC/CSI/OSC
-  sequences, invalid UTF-8, and ordinary Unicode into both filter editors.
-- **Review outcome:** _Pending._
+  sequences, and ordinary Unicode into both filter editors. Invalid UTF-8
+  enters via the initial -f flag — corrected during triage: real Bubble Tea
+  bracketed-paste decoding drops malformed bytes before the model sees them.
+- **Review outcome:** Accepted and implemented (triage Codex/GPT-5, implementation Claude Code/Fable 5, 2026-08-20; commit "Sanitize every terminal ingress and give quitting one exit"). Sanitized at ingress: the shared KeyRunes branch (sanitizeText, so a bracketed paste's newlines/C0/escapes are neutralized before the editor holds them; KeySpace kept separate per UT-014; the journal grep stays one argv), the -f flag, and — the adjacent accepted gap review found — the hostLabel: -H or the local hostname was rendered raw on the startup screen, the header and inside troubleshooting advice; all three now render the sanitized label via sshTarget(), with the raw value retained only for the ssh transport. A raw -H that is nothing but a dropped escape sequence sanitizes to an empty label; it falls back to "remote" (remote-ness stays keyed on r.host, the transport keeps the raw value) — TestAllEscapeHostLabelFallsBackToRemote. Regressions: TestPasteIsSanitizedInBothEditors (hostile payload with exact expected text, no raw ESC in the editor, exact-height frame with the pasted sequence absent, ordinary Unicode untouched), TestInitialFilterFlagIsSanitized (invalid UTF-8 through -f, which real paste decoding cannot carry), TestHostLabelNeverReachesTheScreenRaw (remote -H, hostname-like local value, startup, failure+advice, connected header).
 
 #### [ ] UT-003 — Bound memory used by finite journal reads
 
@@ -257,10 +259,11 @@ hardening opportunity.
   and synthetic key events to both editors.
 - **Review outcome:** Accepted and implemented (same split, same commit). KeyRunes and KeySpace are separate cases: a space event inserts exactly one space whether it carries the real " " rune or none (synthetic), and pasted KeyRunes text passes through as one payload. Regression: TestSpaceInsertsExactlyOneSpace (each editor table-tested with a real-shaped KeySpace, a rune-less synthetic one, and a Paste:true KeyRunes payload).
 
-#### [ ] UT-015 — Centralize Ctrl-C quit and child cleanup
+#### [x] UT-015 — Centralize Ctrl-C quit and child cleanup
 
-- **Status:** Pending review
-- **Confidence:** Medium; verify child lifetime with a quiet process
+- **Status:** Accepted — implemented
+- **Confidence:** High — proven by the follow-mode child regression: the
+  child is reaped and the channel closed before handleKey returns
 - **Evidence:** The filter branch at `src/model.go:424-425` returns `tea.Quit`
   without `m.journal.stop()`, unlike the normal quit path at
   `src/model.go:448-450`. `src/actions.go:105-143` consumes unhandled keys, so
@@ -272,7 +275,7 @@ hardening opportunity.
   before modal handlers consume it.
 - **Regression coverage:** Exercise Ctrl-C in the table, both filter editors,
   the action menu, and confirmation while tracking child termination.
-- **Review outcome:** _Pending._
+- **Review outcome:** Accepted and implemented (same split, same commit). Ownership is complete, not just the follow: page fetches register with the stream via beginPage (refused once stopping — a Cmd scheduled after the quit launches nothing) and are waited alongside; syncJournal replaces streams with stopAndWait too, since replacement drops the last pointer. journalStream gained a done channel closed after the stream goroutine has reaped its children and closed the batch channel, and stopAndWait() (nil-safe both ways) blocks on it — cancel alone only asks, with exec killing and reaping on other goroutines. handleKey recognizes tea.KeyCtrlC by TYPE at its very top — before the too-small, disconnected, menu and filter dispatches that used to swallow or mishandle it — and routes it through model.quit(), the single exit, which stopAndWaits the stream — children reaped and channel closed before the keypress returns; q/esc quits go through the same helper, modal q semantics unchanged; a pasted ETX stays KeyRunes and is sanitized, not obeyed. main() additionally stopAndWaits unconditionally after p.Run() returns (not a defer: the receiver would be evaluated early and os.Exit runs no defers) because bubbletea can consume an OS interrupt before Update sees it. Regressions: TestCtrlCQuitsFromEveryState (seven states with a cancel-spy journal, each asserting tea.QuitMsg and the stop, plus the pasted-ETX case), TestQQuitsThroughTheSameExit, TestCtrlCKillsTheJournalChild (a real quiet-follow child AND a blocked --cursor page child: synchronously after handleKey returns, both are ESRCH exactly — reaped, not zombies — and the channel is closed, no polling), and TestStreamReplacementReapsTheOldChildren (a filter change reaps the old follow and page before syncJournal returns). Post-Run cleanup itself is unexercised by tests (main is not testable without refactoring; judged not practical, per the handoff's "if practical").
 
 ### P3 — edge cases and hardening
 

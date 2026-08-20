@@ -10,7 +10,9 @@ import (
 )
 
 func startupModel() model {
-	m := newModel(newRunner("root@server1"), "server1", time.Second, sortCPU, false, false, false, "")
+	// The label is what main passes: the -H value itself. The screen renders
+	// only the (sanitized) label; the raw host stays with the transport.
+	m := newModel(newRunner("root@server1"), "root@server1", time.Second, sortCPU, false, false, false, "")
 	m.width, m.height, m.ready = 100, 30, true
 	return m
 }

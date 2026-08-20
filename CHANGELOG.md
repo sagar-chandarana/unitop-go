@@ -10,6 +10,24 @@ to change.
 
 ### Fixed
 
+- **Pasting into a filter cannot repaint the screen.** A bracketed paste is
+  one event carrying whatever was on the clipboard — newlines, control
+  bytes, whole escape sequences — and the editors appended it raw, where the
+  header and the editor rendered it straight onto the terminal. Everything
+  typed or pasted is sanitized at ingress now, and so are the -f filter, the
+  -H value and the local hostname: the startup screen, the header and the
+  troubleshooting advice all render only the sanitized name, while ssh keeps
+  the raw one.
+- **Ctrl-C quits from anywhere, and no journalctl outlives the screen.** The
+  action menu swallowed it, the confirmation dialog treated it as cancel,
+  and the filter editors quit without stopping the journal stream — leaving
+  a journalctl -f, and the ssh carrying a remote one, running after exit.
+  Every quit gesture now leaves through one exit that waits for the stream
+  — follow and any page fetch in flight, reaped, not just signalled — a
+  pasted ^C stays data in the editor, replacing a stream (changing unit or
+  filter) reaps the old one before letting go of it, and the program cleans
+  up after the event loop returns too — bubbletea can consume an interrupt
+  before the model ever sees it.
 - **A host on systemd 247–250 is refused up front, by name, instead of
   passing the version gate and failing every poll.** The gate said 247, but
   `--timestamp=unix` — which every detailed poll sends — arrived in v251;

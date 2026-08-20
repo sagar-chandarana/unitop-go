@@ -57,7 +57,14 @@ func main() {
 	}
 
 	p := tea.NewProgram(&m, tea.WithAltScreen(), tea.WithMouseCellMotion())
-	if _, err := p.Run(); err != nil {
+	_, err := p.Run()
+	// Unconditionally, before the error path can os.Exit: bubbletea consumes
+	// an OS interrupt before Update ever sees it, and the journal streams are
+	// rooted at context.Background() — nothing cancels their journalctl (and
+	// the ssh carrying a remote one) but us. Not a defer: its receiver would
+	// be evaluated up here, and os.Exit runs no defers anyway.
+	m.journal.stopAndWait()
+	if err != nil {
 		r.close()
 		fmt.Fprintln(os.Stderr, "unitop:", err)
 		os.Exit(1)

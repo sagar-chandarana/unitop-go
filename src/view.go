@@ -284,15 +284,25 @@ func (m model) viewTooSmall() []string {
 
 var spinnerFrames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
 
+// sshTarget is the remote end's display name — the sanitized label, never
+// the raw -H value — or "" locally, which is what troubleshoot keys
+// ssh-ness on.
+func (m model) sshTarget() string {
+	if m.r.host == "" {
+		return ""
+	}
+	return m.hostLabel
+}
+
 // viewStartup owns the screen until the first poll succeeds. Rendering the
 // normal UI before then would show an empty table of a host we have not
 // reached yet, with the reason buried in the footer.
 func (m model) viewStartup() []string {
 	var body []string
+	// hostLabel, never r.host: the label is sanitized at ingress, and the raw
+	// -H value is terminal-bound input like any other. The transport keeps
+	// the raw one; the screen never sees it.
 	target := m.hostLabel
-	if m.r.host != "" {
-		target = m.r.host
-	}
 
 	if m.err == "" {
 		frame := string(spinnerFrames[m.spinner%len(spinnerFrames)])
@@ -336,7 +346,7 @@ func (m model) viewStartup() []string {
 			body = append(body, lipgloss.NewStyle().Foreground(colRed).Render(l))
 		}
 		body = append(body, "", stColHead.Render("try:"))
-		for _, s := range troubleshoot(m.err, m.r.host) {
+		for _, s := range troubleshoot(m.err, m.sshTarget()) {
 			for i, l := range wrapWords(s, max(8, wrap-4)) {
 				if i == 0 {
 					body = append(body, stFaint.Render("  • ")+stBase.Render(l))

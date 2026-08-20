@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -91,9 +92,15 @@ type olderBatch struct {
 // moves forward in time whatever --reverse says. So we ask for one extra entry,
 // drop the anchor, and flip the rest back into chronological order. Getting
 // only the anchor back means we are at the start of the journal.
-func fetchOlder(parent context.Context, r runner, unit, cursor string, f logFilter, n, gen int) tea.Cmd {
+func fetchOlder(js *journalStream, r runner, unit, cursor string, f logFilter, n, gen int) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+		if js == nil || !js.beginPage() {
+			// Teardown has begun: launch nothing. The empty batch clears the
+			// loading flag if this message is ever delivered at all.
+			return olderBatch{gen: gen}
+		}
+		defer js.pages.Done()
+		ctx, cancel := context.WithTimeout(js.ctx, 30*time.Second)
 		defer cancel()
 
 		args := append([]string{
@@ -155,6 +162,17 @@ type journalStream struct {
 	// hang off it so they die with the stream that asked for them.
 	ctx    context.Context
 	cancel context.CancelFunc
+	// done is closed when the stream goroutine has fully wound down: children
+	// reaped, batch channel closed. stop() only asks for teardown — exec kills
+	// and reaps on other goroutines — so exits use stopAndWait instead.
+	done chan struct{}
+	// Backwards page fetches run as their own tea.Cmds with their own
+	// children, merely parented to ctx; the stream tracks them so teardown
+	// can wait for those too. stopping is flipped under mu before pages is
+	// waited on, so no page can register once the wait has begun.
+	mu       sync.Mutex
+	stopping bool
+	pages    sync.WaitGroup
 }
 
 func (j *journalStream) stop() {
@@ -162,6 +180,37 @@ func (j *journalStream) stop() {
 		return
 	}
 	j.cancel()
+}
+
+// beginPage registers a page fetch with the stream that owns it. It refuses
+// once teardown has begun, so a Cmd scheduled after the quit can never
+// launch a child nobody will wait for.
+func (j *journalStream) beginPage() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.stopping {
+		return false
+	}
+	j.pages.Add(1)
+	return true
+}
+
+// stopAndWait tears the stream down and returns only once its children are
+// reaped and its channel closed — the follow AND any page fetch in flight.
+// Exits and stream replacement need this variant: cancel alone only asks,
+// and main can reach os.Exit before the other goroutines act on it.
+func (j *journalStream) stopAndWait() {
+	if j == nil {
+		return
+	}
+	j.mu.Lock()
+	j.stopping = true
+	j.mu.Unlock()
+	j.stop()
+	if j.done != nil {
+		<-j.done
+	}
+	j.pages.Wait()
 }
 
 // journalFields is what we read of each entry. __CURSOR comes back regardless,
@@ -187,9 +236,11 @@ const journalFields = "--output-fields=MESSAGE,PRIORITY,SYSLOG_IDENTIFIER,_PID"
 func startJournal(parent context.Context, r runner, unit string, f logFilter, backlog, gen int) *journalStream {
 	ctx, cancel := context.WithCancel(parent)
 	ch := make(chan journalBatch, 64)
-	js := &journalStream{gen: gen, unit: unit, filter: f, ch: ch, ctx: ctx, cancel: cancel}
+	js := &journalStream{gen: gen, unit: unit, filter: f, ch: ch, ctx: ctx, cancel: cancel,
+		done: make(chan struct{})}
 
 	go func() {
+		defer close(js.done) // deferred first, so it runs last — after close(ch)
 		defer close(ch)
 		send := func(b journalBatch) bool {
 			select {
