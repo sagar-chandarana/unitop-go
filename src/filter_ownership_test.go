@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -10,12 +12,39 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// recordPageArgv shadows journalctl and records the argv of BACKWARDS-PAGE
+// invocations only (those carrying --cursor). Follow streams leaked from other
+// tests in the same `go test ./...` process also exec journalctl and would
+// clobber a shared argv file (they carry -f, not --cursor); the guard keeps
+// this recorder immune to that contamination.
+func recordPageArgv(t *testing.T) func() string {
+	t.Helper()
+	bin := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"for a in \"$@\"; do\n" +
+		"  if [ \"$a\" = \"--cursor\" ]; then\n" +
+		"    printf '%s\\n' \"$@\" > \"$RECORD_DIR/argv\"\n" +
+		"    break\n" +
+		"  fi\n" +
+		"done\n" +
+		"exit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "journalctl"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RECORD_DIR", bin)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return func() string {
+		b, _ := os.ReadFile(filepath.Join(bin, "argv"))
+		return string(b)
+	}
+}
+
 // loadOlder must build its backwards page from the stream's applied filter, not
 // the model's m.logFilt. Proven by the recorded journalctl argv (not by reading
 // a field): the applied model filter is set to a DIFFERENT value, so a
 // regression to it would show up in the argv.
 func TestPagingUsesTheStreamFilterNotTheDraft(t *testing.T) {
-	readArgv := fakeFiniteJournalctl(t, "exit 0\n")
+	readArgv := recordPageArgv(t)
 
 	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
 	m.width, m.height, m.ready = 140, 30, true
