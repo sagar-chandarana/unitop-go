@@ -285,10 +285,27 @@ func startJournal(parent context.Context, r runner, unit string, f logFilter, ba
 				{ts: time.Now(), prio: 3, msg: sanitizeText(msg), meta: true}}})
 		}
 
-		// Phase one. Note the time first: with nothing in the backlog there is
-		// no cursor to resume from, and following from `now` would miss
-		// anything written while this command ran.
+		// Phase one. Note the boundary first: with nothing in the backlog
+		// there is no cursor to resume from, and the follow starts --since
+		// here. On a remote, the boundary must be the REMOTE's now — the
+		// client's clock re-created the skew bug, excluding every new entry
+		// until a behind remote caught up. Floor-second epoch: harmless
+		// replay beats loss. A probe that cannot run is a visible, retryable
+		// stream failure, and the retirement path recovers it like any other.
 		since := time.Now()
+		if r.host != "" {
+			out, err := r.command(ctx, "date", "+%s").Output()
+			if err != nil {
+				meta("remote clock probe: " + wrapExec(err).Error())
+				return
+			}
+			remoteNow, perr := parseEpochLine(string(out))
+			if perr != nil {
+				meta("remote clock probe: " + perr.Error())
+				return
+			}
+			since = remoteNow
+		}
 		lines, err := readBacklog(ctx, r, unit, f, backlog)
 		if err != nil {
 			meta(err.Error())

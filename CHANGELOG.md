@@ -10,6 +10,15 @@ to change.
 
 ### Fixed
 
+- **A remote host's clock no longer bends its uptimes or its journal.**
+  Unit uptimes were computed by subtracting the remote wall clock's stamps
+  from the client's — skew made them negative or inflated. Every remote
+  poll now samples the remote's epoch and shifts its stamps into the
+  client's frame, uniformly, so ordering survives and a freshly started
+  unit reads "up 0s" rather than "up -". And when an empty journal backlog
+  hands the follow a time boundary instead of a cursor, that boundary is
+  the remote's now, not the client's: a remote running behind used to sit
+  silent until its clock caught up to ours.
 - **The ssh control socket lives in a private directory of its own.** It was
   a predictable /tmp name any local user could squat, and a squatted socket
   made every real connection hang out its ControlMaster attempt. Each remote

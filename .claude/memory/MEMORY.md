@@ -13,6 +13,7 @@
 - [--timestamp=unix needs systemd 251 — validate floors against the enum value, not the flag](project_systemd_unix_timestamp_floor.md) — v250 has --timestamp without unix; 247–250 passed the old gate and failed every poll
 - [/proc/stat counts guest time twice on purpose](project_proc_stat_guest.md) — the man page is silent, the kernel source is the authority, and only hypervisors show the bug
 - [iowait can run backwards — validate monotonicity, reject the interval, advance the baseline](project_proc_stat_iowait.md) — a backwards uint64 delta is ~1.8e19; the fix pattern and the synthetic regression
+- [systemd monotonic stamps vs /proc/uptime: suspend splits CLOCK_MONOTONIC from CLOCK_BOOTTIME](project_monotonic_vs_boottime.md) — skew-proof cross-machine ages with realtime + a sampled offset, never monotonic-minus-uptime
 - `systemctl show '*.service'` matches only ~60% of loaded units — the unit list must come from `list-units` first
 - Unit/slice names carry `\xNN` escapes (`my\x2dapp.slice`); parent derivation splits on literal `-`, so escaped names nest correctly by luck as well as by design
 

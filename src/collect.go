@@ -190,6 +190,11 @@ type Collector struct {
 	// that passed the gate — failed or rejected probes leave it 0, so the
 	// next poll probes again; remotely every poll re-reports it anyway.
 	version int
+	// clockOff is client-minus-remote, re-sampled every remote poll. The
+	// remote's realtime unit stamps are shifted by it before anything
+	// client-side calls time.Since on them: the two clocks owe each other
+	// nothing, and skew rendered uptimes negative or inflated.
+	clockOff time.Duration
 }
 
 func NewCollector(r runner) *Collector {
@@ -223,6 +228,7 @@ func (c *Collector) Poll(ctx context.Context) ([]Unit, HostStats, error) {
 		}
 		units = append(units, parseShow(string(out))...)
 	}
+	c.normalizeClocks(units)
 
 	seen := make(map[string]sample, len(units))
 	for i := range units {
@@ -325,12 +331,13 @@ var listUnitsArgs = []string{
 	"list-units", "--type=service", "--all", "--plain", "--no-legend", "--no-pager",
 }
 
-// Markers separating the sections of the one-line remote poll script. Neither
+// Markers separating the sections of the one-line remote poll script. None
 // may start with '#', which would comment out the rest of the line, and
-// neither may appear in /proc output.
+// none may appear in /proc output.
 const (
-	verMarker  = "@@unitop-proc@@"
-	procMarker = "@@unitop-units@@"
+	clockMarker = "@@unitop-ver@@" // ends the clock section; the version follows
+	verMarker   = "@@unitop-proc@@"
+	procMarker  = "@@unitop-units@@"
 )
 
 // pollBase fetches the systemd version, the /proc files and the unit list.
@@ -367,22 +374,37 @@ func (c *Collector) pollBase(ctx context.Context) (map[string]string, []string, 
 		return proc, parseUnitList(string(out)), nil
 	}
 
-	// `|| exit` keeps the version command's own failure: piped through the
-	// old `| head -1` its status vanished, later commands succeeded, and an
-	// empty version parsed as a fatal "no systemd" verdict on a host whose
-	// systemctl had merely hiccuped. Its stderr rides the ssh exit error and
-	// the whole thing stays retryable.
-	script := "systemctl --version || exit; echo '" + verMarker + "'; " +
+	// `|| exit` keeps each probe's own failure: piped through the old
+	// `| head -1` the version's status vanished, later commands succeeded,
+	// and an empty version parsed as a fatal "no systemd" verdict on a host
+	// whose systemctl had merely hiccuped. Stderr rides the ssh exit error
+	// and the whole thing stays retryable. The clock sample leads: remote
+	// realtime stamps (unit uptimes) are normalized against it, since the
+	// two machines' clocks owe each other nothing.
+	script := "date +%s || exit; echo '" + clockMarker + "'; " +
+		"systemctl --version || exit; echo '" + verMarker + "'; " +
 		"grep -H '' " + strings.Join(procFiles, " ") + " 2>/dev/null; " +
 		"echo '" + procMarker + "'; systemctl " + strings.Join(listUnitsArgs, " ")
+	// The offset boundary is the LAUNCH instant, wall-only: `date` runs
+	// first on the far side, so client-now-minus-remote-epoch measured
+	// AFTER the round trip would fold the whole script and return latency
+	// into every age. Anchored at launch, the error is bounded by the
+	// one-way outbound latency plus the floor-second — ages overstate by at
+	// most that, never by a loaded host's whole poll.
+	launched := time.Now().Round(0)
 	out, err := c.r.command(ctx, "sh", "-c", script).Output()
 	if err != nil {
 		return nil, nil, fmt.Errorf("remote poll: %w", wrapExec(err))
 	}
-	ver, proc, units, perr := parseRemotePoll(string(out))
+	clock, ver, proc, units, perr := parseRemotePoll(string(out))
 	if perr != nil {
 		return nil, nil, fmt.Errorf("remote poll: %w", perr)
 	}
+	remoteNow, perr := parseEpochLine(clock)
+	if perr != nil {
+		return nil, nil, fmt.Errorf("remote poll: %w", perr)
+	}
+	c.clockOff = launched.Sub(remoteNow) // positive when the client is ahead
 	c.version = parseSystemdVersion(firstLineOf(ver))
 	if err := checkVersion(c.version, c.r.target()); err != nil {
 		return nil, nil, err
@@ -390,7 +412,7 @@ func (c *Collector) pollBase(ctx context.Context) (map[string]string, []string, 
 	return parseProcDump(proc), parseUnitList(units), nil
 }
 
-// parseRemotePoll splits the remote round trip by its two marker LINES,
+// parseRemotePoll splits the remote round trip by its three marker LINES,
 // strictly. CRLF is normalized first — command-line -T deterministically
 // wins over any RequestTTY config (ssh -G proves it), but the remote OUTPUT
 // itself may carry CRLF, and defensive framing costs nothing. A delimiter
@@ -401,32 +423,31 @@ func (c *Collector) pollBase(ctx context.Context) (map[string]string, []string, 
 // lenient Cut ignored its booleans, so torn framing became a
 // successful-looking zero-unit poll, or handed the version parser an empty
 // string that turned into a fatal "no systemd" verdict.
-func parseRemotePoll(out string) (ver, proc, units string, err error) {
+func parseRemotePoll(out string) (clock, ver, proc, units string, err error) {
 	lines := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
-	vi, pi := -1, -1
+	markers := [3]string{clockMarker, verMarker, procMarker}
+	idx := [3]int{-1, -1, -1}
 	for i, l := range lines {
-		switch l {
-		case verMarker:
-			if vi >= 0 {
-				return "", "", "", errors.New("malformed poll framing: the version marker line is duplicated")
+		for j, mk := range markers {
+			if l != mk {
+				continue
 			}
-			vi = i
-		case procMarker:
-			if pi >= 0 {
-				return "", "", "", errors.New("malformed poll framing: the proc marker line is duplicated")
+			if idx[j] >= 0 {
+				return "", "", "", "", errors.New("malformed poll framing: a marker line is duplicated")
 			}
-			pi = i
+			idx[j] = i
 		}
 	}
-	if vi < 0 || pi < 0 {
-		return "", "", "", errors.New("malformed poll framing: a marker line is missing")
+	if idx[0] < 0 || idx[1] < 0 || idx[2] < 0 {
+		return "", "", "", "", errors.New("malformed poll framing: a marker line is missing")
 	}
-	if pi < vi {
-		return "", "", "", errors.New("malformed poll framing: the marker lines are out of order")
+	if !(idx[0] < idx[1] && idx[1] < idx[2]) {
+		return "", "", "", "", errors.New("malformed poll framing: the marker lines are out of order")
 	}
-	return strings.Join(lines[:vi], "\n"),
-		strings.Join(lines[vi+1:pi], "\n"),
-		strings.Join(lines[pi+1:], "\n"), nil
+	return strings.Join(lines[:idx[0]], "\n"),
+		strings.Join(lines[idx[0]+1:idx[1]], "\n"),
+		strings.Join(lines[idx[1]+1:idx[2]], "\n"),
+		strings.Join(lines[idx[2]+1:], "\n"), nil
 }
 
 func firstLineOf(s string) string {
@@ -620,4 +641,70 @@ func wrapExec(err error) error {
 		return fmt.Errorf("%v: %s", err, msg)
 	}
 	return err
+}
+
+// normalizeClocks shifts the remote's realtime unit stamps into the client's
+// frame — ActiveEnterTimestamp and StateChangeTimestamp are the remote wall
+// clock's opinion, and everything client-side computes ages from them. The
+// shift is UNIFORM and nothing else: clamping individual values here would
+// collapse distinct near-future stamps and scramble sort and tree order.
+// A stamp the shift lands slightly in the future (mid-poll activation,
+// floor-second rounding) is the age helper's problem, at display time.
+// The stamps are wall-only time.Times throughout — parseUnixTS builds them
+// from time.Unix, so no Go monotonic reading is ever attached. Local
+// collectors share one clock and are left alone.
+func (c *Collector) normalizeClocks(units []Unit) {
+	if c.r.host == "" || c.clockOff == 0 {
+		return
+	}
+	for i := range units {
+		for _, ts := range []*time.Time{&units[i].ActiveSince, &units[i].StateChange} {
+			if !ts.IsZero() {
+				*ts = ts.Add(c.clockOff)
+			}
+		}
+	}
+}
+
+// ageOf is the one place an elapsed duration is derived from a unit stamp.
+// A normalized remote stamp can land a hair in the future; the clamp lives
+// HERE, on the displayed duration, so the stored stamps keep their order.
+func ageOf(ts time.Time) time.Duration {
+	if d := time.Since(ts); d > 0 {
+		return d
+	}
+	return 0
+}
+
+// parseEpochLine reads a clock probe's reply, no more forgivingly than
+// `date +%s` prints it: decimal digits and the command's single trailing
+// LF or CRLF — no surrounding whitespace, no extra blank lines, no sign —
+// fitting a positive int64. Shared by the poll's clock section and the
+// journal boundary probe, so the two cannot drift apart in what they
+// accept.
+func parseEpochLine(s string) (time.Time, error) {
+	switch {
+	case strings.HasSuffix(s, "\r\n"):
+		s = s[:len(s)-2]
+	case strings.HasSuffix(s, "\n"):
+		s = s[:len(s)-1]
+	}
+	// A bare carriage return is not a terminator; it falls through to the
+	// digit check and is rejected like any other stray byte.
+	if s == "" {
+		return time.Time{}, errors.New("the clock reply is empty")
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return time.Time{}, errors.New("the clock reply is not a bare decimal epoch")
+		}
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return time.Time{}, errors.New("the clock reply overflows an epoch")
+	}
+	if n <= 0 {
+		return time.Time{}, errors.New("the clock reply is not a positive epoch")
+	}
+	return time.Unix(n, 0), nil
 }

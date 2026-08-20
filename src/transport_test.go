@@ -89,31 +89,34 @@ func TestRemoteArgvShape(t *testing.T) {
 // lenient Cut turned these into successful zero-unit polls or fatal
 // version-0 verdicts.
 func TestParseRemotePollFraming(t *testing.T) {
-	good := "systemd 251 (251.4)\n+FLAGS\n" + verMarker + "\n/proc/stat:cpu  0 0 0 0 0 0 0 0 0 0\n" +
+	good := "1723000000\n" + clockMarker + "\nsystemd 251 (251.4)\n+FLAGS\n" + verMarker + "\n/proc/stat:cpu  0 0 0 0 0 0 0 0 0 0\n" +
 		procMarker + "\nfake.service loaded active running Fake\n"
 
-	ver, proc, units, err := parseRemotePoll(good)
+	clock, ver, proc, units, err := parseRemotePoll(good)
 	if err != nil {
 		t.Fatalf("LF framing rejected: %v", err)
 	}
-	if firstLineOf(ver) != "systemd 251 (251.4)" || !strings.Contains(proc, "/proc/stat") ||
-		!strings.Contains(units, "fake.service") {
-		t.Errorf("sections misassigned: ver=%q proc=%q units=%q", ver, proc, units)
+	if firstLineOf(clock) != "1723000000" || firstLineOf(ver) != "systemd 251 (251.4)" ||
+		!strings.Contains(proc, "/proc/stat") || !strings.Contains(units, "fake.service") {
+		t.Errorf("sections misassigned: clock=%q ver=%q proc=%q units=%q", clock, ver, proc, units)
 	}
 
 	crlf := strings.ReplaceAll(good, "\n", "\r\n")
-	if _, _, u, err := parseRemotePoll(crlf); err != nil || !strings.Contains(u, "fake.service") {
+	if _, _, _, u, err := parseRemotePoll(crlf); err != nil || !strings.Contains(u, "fake.service") {
 		t.Errorf("CRLF framing not normalized: %v", err)
 	}
 
 	bad := map[string]string{
-		"missing version marker": strings.Replace(good, verMarker+"\n", "", 1),
-		"missing proc marker":    strings.Replace(good, procMarker+"\n", "", 1),
-		"duplicated marker":      good + verMarker + "\n",
-		"reversed markers":       procMarker + "\nproc\n" + verMarker + "\nsystemd 251\n",
+		"missing clock marker":    strings.Replace(good, clockMarker+"\n", "", 1),
+		"missing version marker":  strings.Replace(good, verMarker+"\n", "", 1),
+		"missing proc marker":     strings.Replace(good, procMarker+"\n", "", 1),
+		"duplicated ver marker":   good + verMarker + "\n",
+		"duplicated clock marker": good + clockMarker + "\n",
+		"duplicated proc marker":  good + procMarker + "\n",
+		"reversed markers":        procMarker + "\nproc\n" + verMarker + "\nsystemd 251\n" + clockMarker + "\n1723000000\n",
 	}
 	for name, in := range bad {
-		if _, _, _, err := parseRemotePoll(in); err == nil {
+		if _, _, _, _, err := parseRemotePoll(in); err == nil {
 			t.Errorf("%s was accepted", name)
 		}
 	}
@@ -211,19 +214,23 @@ func TestUnusableTempDirOmitsUnitopMuxOptions(t *testing.T) {
 // a whole line equal to the marker delimits, and a duplicated one still
 // fails.
 func TestMarkerTokensInsideDataStayData(t *testing.T) {
-	good := "systemd 251 (251.4)\n" + verMarker + "\n/proc/stat:cpu 0\n" + procMarker + "\n" +
+	good := "1723000000\n" + clockMarker + "\nsystemd 251 (251.4)\n" + verMarker + "\n/proc/stat:cpu 0\n" + procMarker + "\n" +
 		"evil.service loaded active running says " + verMarker + " often\n" +
-		"worse.service loaded active running suffixed " + procMarker + "\n"
-	_, _, units, err := parseRemotePoll(good)
+		"worse.service loaded active running suffixed " + procMarker + "\n" +
+		"sly.service loaded active running mentions " + clockMarker + " too\n" +
+		"last.service loaded active running suffixed " + clockMarker + "\n"
+	_, _, _, units, err := parseRemotePoll(good)
 	if err != nil {
 		t.Fatalf("marker tokens inside descriptions broke the framing: %v", err)
 	}
-	if !strings.Contains(units, "evil.service") || !strings.Contains(units, "worse.service") {
-		t.Errorf("data lines lost: %q", units)
+	for _, u := range []string{"evil.service", "worse.service", "sly.service", "last.service"} {
+		if !strings.Contains(units, u) {
+			t.Errorf("data line %q lost: %q", u, units)
+		}
 	}
 
 	dup := good + verMarker + "\n"
-	if _, _, _, err := parseRemotePoll(dup); err == nil {
+	if _, _, _, _, err := parseRemotePoll(dup); err == nil {
 		t.Error("a duplicated standalone marker line was accepted")
 	}
 }

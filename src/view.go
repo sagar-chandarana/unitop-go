@@ -920,7 +920,7 @@ func cellFor(r row, c colDef, idx int) (string, lipgloss.Style) {
 		if u.ActiveSince.IsZero() || (r.kind == rowUnit && u.Active != "active") {
 			return "-", stFaint
 		}
-		d := time.Since(u.ActiveSince)
+		d := ageOf(u.ActiveSince)
 		st := stFaint
 		if d < 2*time.Minute {
 			st = lipgloss.NewStyle().Foreground(colYellow)
@@ -1110,7 +1110,7 @@ func (m model) unitStats(u Unit) []string {
 		stats = append(stats, stBad.Render(fmt.Sprintf("exit %d", code)))
 	}
 	if !u.ActiveSince.IsZero() && u.Active == "active" {
-		stats = append(stats, "up "+humanDur(time.Since(u.ActiveSince)))
+		stats = append(stats, "up "+humanDur(ageOf(u.ActiveSince)))
 	}
 	if u.Tasks != unsetU64 {
 		tasks := fmt.Sprintf("tasks %d", u.Tasks)
