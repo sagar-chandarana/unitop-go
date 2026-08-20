@@ -153,7 +153,7 @@ func TestStartupScreenFitsEverySize(t *testing.T) {
 						"Connection timed out after a while"
 					m.attempts = 3
 				case "fatal":
-					m.err = "systemd 229 on host is older than 247"
+					m.err = "systemd 229 on host is older than 251"
 					m.fatal = true
 				}
 				checkScreen(t, "startup/"+name, m)

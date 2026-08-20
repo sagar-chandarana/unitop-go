@@ -34,7 +34,7 @@ func TestFatalAfterConnectingDoesNotLatch(t *testing.T) {
 		t.Fatal("a healthy model should poll on a tick")
 	}
 
-	m.Update(unitsMsg{err: &UnsupportedError{msg: "systemd 229 on h is older than 247"}})
+	m.Update(unitsMsg{err: &UnsupportedError{msg: "systemd 229 on h is older than 251"}})
 	if !m.fatal {
 		t.Fatal("an unsupported host should stop the polling")
 	}
@@ -59,7 +59,7 @@ func TestExplicitRefreshClearsFatal(t *testing.T) {
 	for _, connected := range []bool{true, false} {
 		m := fatalModel(t)
 		m.connected = connected
-		m.Update(unitsMsg{err: &UnsupportedError{msg: "systemd 229 on h is older than 247"}})
+		m.Update(unitsMsg{err: &UnsupportedError{msg: "systemd 229 on h is older than 251"}})
 		if !m.fatal {
 			t.Fatalf("connected=%v: not fatal to begin with", connected)
 		}
@@ -78,7 +78,7 @@ func TestExplicitRefreshClearsFatal(t *testing.T) {
 // of the key hints while one is set, so the host bar carries it.
 func TestFrozenPollingIsVisible(t *testing.T) {
 	m := fatalModel(t)
-	m.Update(unitsMsg{err: &UnsupportedError{msg: "systemd 229 on h is older than 247"}})
+	m.Update(unitsMsg{err: &UnsupportedError{msg: "systemd 229 on h is older than 251"}})
 
 	screen := stripANSI(m.View())
 	if !strings.Contains(screen, "NOT POLLING") {

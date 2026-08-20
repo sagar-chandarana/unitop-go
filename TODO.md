@@ -23,9 +23,9 @@ hardening opportunity.
 
 ### P1 — high priority
 
-#### [ ] UT-001 — Align the minimum systemd version with `--timestamp=unix`
+#### [x] UT-001 — Align the minimum systemd version with `--timestamp=unix`
 
-- **Status:** Pending review
+- **Status:** Accepted — implemented
 - **Confidence:** High
 - **Evidence:** `src/collect.go:196` always invokes `systemctl show` with
   `--timestamp=unix`, while `src/collect.go:239-244` accepts systemd 247 and
@@ -37,7 +37,7 @@ hardening opportunity.
 - **Regression coverage:** Exercise the version gate and generated arguments
   for 247, 250, and 251.
 - **Reference:** [systemd v251 release notes](https://github.com/systemd/systemd/releases/tag/v251)
-- **Review outcome:** _Pending._
+- **Review outcome:** Accepted and implemented (triage Codex/GPT-5, implementation Claude Code/Fable 5, 2026-08-20; commit "Refuse systemd 247-250 up front, and make the refusal honest"). Triage pinned the true floor: v250 advertises --timestamp with only pretty/us/utc/us+utc; the v251 release notes introduce the unix choice. minSystemd is 251 (raised, per triage, rather than adding an old-format parser); README, messages and tests updated. Regressions: TestCheckVersion (229/247/250 rejected, 251+ accepted) and TestLocalProbeRetriesAndCachesThroughUpgrades asserts the detailed show argv still opens with exactly [show --timestamp=unix].
 
 #### [ ] UT-002 — Sanitize filter text before it reaches the terminal
 
@@ -276,9 +276,9 @@ hardening opportunity.
 
 ### P3 — edge cases and hardening
 
-#### [ ] UT-016 — Re-probe a cached unsupported local systemd version
+#### [x] UT-016 — Re-probe a cached unsupported local systemd version
 
-- **Status:** Pending review
+- **Status:** Accepted — implemented
 - **Confidence:** High
 - **Evidence:** `src/collect.go:316-323` probes the local version only while the
   cached value is zero. A nonzero unsupported result remains cached across the
@@ -290,7 +290,7 @@ hardening opportunity.
   the distinction between an unavailable probe and a parsed old version.
 - **Regression coverage:** Inject old, then supported, version responses and
   verify that retry succeeds without restarting the model.
-- **Review outcome:** _Pending._
+- **Review outcome:** Accepted and implemented, local scope (same split, same commit; narrowed per the 02:52:56 amendment — no model-side cache invalidation). The local probe parses into a temporary and caches only a version that passes: a rejected or malformed result stays uncached (still UnsupportedError), so the existing R/Enter retry re-probes the same collector and an upgraded host recovers without a restart; a probe that could not run propagates through wrapExec as an ordinary retryable error with its stderr; accepted versions stay cached across timer polls. The adjacent troubleshoot advice now names the failed binary (local systemctl / remote systemctl / ssh client). Regressions: TestLocalProbeRetriesAndCachesThroughUpgrades (a real scripted systemctl on PATH: fail→retryable+stderr, 250→UnsupportedError uncached, 251→same collector succeeds, then two polls with zero further probe calls against a failing stub), TestExplicitRetryRecoversAfterUpgrade (the user-visible half: one model takes the fatal verdict, the stub is upgraded, R's returned tea.Cmd is executed and fed back — fatal cleared, connected, units delivered), and TestTroubleshootNamesTheMissingBinary.
 
 #### [x] UT-017 — Do not claim a trimmed buffer starts at the journal beginning
 
@@ -333,12 +333,23 @@ hardening opportunity.
   such as `RequestTTY force` can produce CRLF output. Section parsing at
   `src/collect.go:339-340` expects an exact marker followed by `\n` and ignores
   whether `strings.Cut` succeeded.
+  Additional evidence (2026-08-20, UT-001/016 pass): the remote probe
+  pipeline `systemctl --version 2>/dev/null | head -1` discards the version
+  command's exit status — when the rest of the script succeeds, a probe
+  failure parses as version 0 and becomes a fatal "no systemd" verdict
+  rather than a retryable error.
 - **Impact:** The version may parse while the `/proc` and unit sections become
-  empty, yielding a successful-looking zero-unit poll.
+  empty, yielding a successful-looking zero-unit poll. And via the pipeline
+  defect above: a remote probe failure whose later sections succeed parses
+  as version 0 and lands as a fatal "no systemd" verdict instead of a
+  retryable error.
 - **Suggested resolution:** Add `-T`, check both marker splits, and tolerate or
-  reject CRLF explicitly.
+  reject CRLF explicitly. Preserve and validate the version subcommand's own
+  exit status through the pipeline rather than letting `head -1` mask it.
 - **Regression coverage:** Test the generated SSH arguments and parse marker
-  streams with LF, CRLF, missing, and duplicated delimiters.
+  streams with LF, CRLF, missing, and duplicated delimiters. Also a remote
+  script where the version command fails while later sections succeed: the
+  result must be a retryable error, not a fatal version-0 verdict.
 - **Review outcome:** _Pending._
 
 #### [ ] UT-020 — Make all clipping and menu sizing grapheme-aware

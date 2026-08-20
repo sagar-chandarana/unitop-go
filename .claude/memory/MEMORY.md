@@ -10,6 +10,7 @@
 
 - [inactive/dead means four different things](project_systemd_state_semantics.md) — `ExecMainCode` + `ConditionResult` tell them apart; includes real sampled tuples and the "code=0 while running" trap
 - [Four journalctl behaviours no man page states](project_journalctl_traps.md) — `-g` is not a seek (which is why the log pane is two commands), `-n 0` defeats `--after-cursor`, `-n N` order depends on the filter, `-g` exits 1 on no match
+- [--timestamp=unix needs systemd 251 — validate floors against the enum value, not the flag](project_systemd_unix_timestamp_floor.md) — v250 has --timestamp without unix; 247–250 passed the old gate and failed every poll
 - [/proc/stat counts guest time twice on purpose](project_proc_stat_guest.md) — the man page is silent, the kernel source is the authority, and only hypervisors show the bug
 - [iowait can run backwards — validate monotonicity, reject the interval, advance the baseline](project_proc_stat_iowait.md) — a backwards uint64 delta is ~1.8e19; the fix pattern and the synthetic regression
 - `systemctl show '*.service'` matches only ~60% of loaded units — the unit list must come from `list-units` first

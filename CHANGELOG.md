@@ -10,6 +10,17 @@ to change.
 
 ### Fixed
 
+- **A host on systemd 247–250 is refused up front, by name, instead of
+  passing the version gate and failing every poll.** The gate said 247, but
+  `--timestamp=unix` — which every detailed poll sends — arrived in v251;
+  v250's `--timestamp` knows only pretty/us/utc/us+utc. The gate's failures
+  are also the right kind now: a version probe that could not run at all
+  (systemctl missing, a broken library) is an ordinary retryable error
+  carrying its stderr rather than a fatal "no systemd" verdict; a too-old
+  verdict is no longer cached, so R after an upgrade re-probes instead of
+  re-reading the stale rejection; and the troubleshooting advice for a
+  missing binary names the binary that failed instead of blaming the ssh
+  client for a missing local systemctl.
 - **A backwards iowait tick can no longer show an absurd CPU percentage.**
   idle includes iowait, which the kernel lets run backwards; subtracted as an
   unsigned integer it wrapped, and one glitched sample reported an enormous

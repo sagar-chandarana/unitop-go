@@ -166,7 +166,10 @@ type Collector struct {
 	r        runner
 	prev     map[string]sample
 	prevHost *hostSample
-	version  int // systemd major on the target, 0 until the first poll
+	// version is the cached systemd major. Locally it holds only a version
+	// that passed the gate — failed or rejected probes leave it 0, so the
+	// next poll probes again; remotely every poll re-reports it anyway.
+	version int
 }
 
 func NewCollector(r runner) *Collector {
@@ -236,12 +239,15 @@ func rate(cur, prev uint64, dt float64) float64 {
 	return float64(cur-prev) / dt
 }
 
-// minSystemd is the oldest systemd unitop works with. v247 (December 2020) is
-// the first that accepts `systemctl show --timestamp=unix`; below it the
-// timestamps come back locale-formatted and `journalctl --output-fields` does
-// not exist either. Rather than carry a second code path for releases that old,
-// unitop checks the version up front and says so.
-const minSystemd = 247
+// minSystemd is the oldest systemd unitop works with. v251 (May 2022) is
+// the first whose `systemctl show --timestamp=unix` exists at all: v250
+// advertises --timestamp but knows only pretty/us/utc/us+utc, and the v251
+// release notes introduce the unix choice — so on anything older every
+// detailed poll fails on its own arguments. (The floor said 247 for a while,
+// which merely looked right: 247–250 passed this gate and then failed every
+// poll.) Rather than carry a second code path for releases that old, unitop
+// checks the version up front and says so.
+const minSystemd = 251
 
 // parseSystemdVersion reads the major version out of the first line of
 // `systemctl --version`: "systemd 229" or "systemd 257 (257.7)".
@@ -315,11 +321,23 @@ const (
 func (c *Collector) pollBase(ctx context.Context) (map[string]string, []string, error) {
 	if c.r.host == "" {
 		if c.version == 0 {
-			out, _ := c.r.command(ctx, "systemctl", "--version").Output()
-			c.version = parseSystemdVersion(firstLineOf(string(out)))
-		}
-		if err := checkVersion(c.version, c.r.target()); err != nil {
-			return nil, nil, err
+			out, err := c.r.command(ctx, "systemctl", "--version").Output()
+			if err != nil {
+				// A probe that could not run is not a verdict about the
+				// host's systemd — it is an ordinary, retryable failure.
+				// Discarding it here turned "systemctl missing from PATH"
+				// into a fatal "no systemd" that stopped polling for good.
+				return nil, nil, fmt.Errorf("systemctl --version: %w", wrapExec(err))
+			}
+			// Validate before caching: only a version that passes is kept.
+			// Caching a rejected one made the explicit-retry gestures
+			// no-ops — the fatal verdict was re-issued from the cache even
+			// after the host's systemd had been upgraded underneath us.
+			v := parseSystemdVersion(firstLineOf(string(out)))
+			if err := checkVersion(v, c.r.target()); err != nil {
+				return nil, nil, err
+			}
+			c.version = v
 		}
 		proc := readProcLocal()
 		out, err := c.r.command(ctx, "systemctl", listUnitsArgs...).Output()

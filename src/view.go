@@ -436,13 +436,20 @@ func troubleshoot(err, host string) []string {
 			"retry, and check the host's auth log if it keeps happening",
 		}
 	case strings.Contains(e, "command not found"), strings.Contains(e, "executable file not found"):
-		if ssh && !strings.Contains(e, "ssh:") {
+		// Blame the binary the error names: a missing local systemctl used
+		// to be blamed on the ssh client, which is not even involved.
+		if strings.Contains(e, "systemctl") {
 			return []string{
 				"systemctl is missing on " + target + " — is it actually a systemd host?",
 			}
 		}
+		if ssh {
+			return []string{
+				"the ssh client is not installed, or not on PATH",
+			}
+		}
 		return []string{
-			"the ssh client is not installed, or not on PATH",
+			"a command unitop needs is missing from PATH",
 		}
 	case strings.Contains(e, "too old"), strings.Contains(e, "unrecognized option"):
 		return []string{
