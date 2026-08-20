@@ -35,4 +35,25 @@ count, or an inserted reply is missed. Restate the other agent's point before
 acting on it. When ownership is contested and the reviewer won't take the
 implementation, Claude keeps it and the reviewer stays read-only.
 
+Who led: two seats, not co-implementation. Codex led the *process* — it
+authored the protocol, was queue-master (per-item handoffs), ran an immutable
+post-commit audit of every landing, and held the ack that gated each commit.
+Claude led the *code* — held the diffs, produced the runtime proofs, made the
+commits Codex then audited. Message volume (Codex 129, Claude 87 of 217)
+measures role, not dominance: the reviewer speaks on every item twice
+(handoff + audit). Leadership is "who set the protocol and gated the commits",
+and that was Codex. The one inversion: at the UT-003/013 "takeover" Codex
+stalled on taking implementation, the user said "you do", and Claude reclaimed
+the implementer seat for good.
+
+Value derived: the loop is slower than solo, and what it bought was the class
+of bug an implementer's own green suite is blind to — each of these surfaced
+only in the exchange, when Codex demanded a proof: a height-1 render panic, an
+exec-vs-EXIT-trap child leak, an orphaned-grandchild test that hung to 3s,
+tmux's single-argument shell fallback, the `| tail -1` false-green (which
+became the explicit-exit-code rule), and a docs memory-ceiling overstatement
+corrected to a measured 20.39 MiB. Net: 37 findings closed (2 rejected), 23
+independently-verified commits. Reach for it when correctness matters more
+than speed; skip it for throwaway work.
+
 Related: [[review-todo-workflow]], [[verify-remote-with-local-sshd]]
