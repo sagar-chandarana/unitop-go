@@ -29,6 +29,16 @@ to change.
   newest 20000 lines") instead of a live count, which deliberately rides up to
   2048 lines above the cap between trims — so the old number was usually wrong
   and jittered from frame to frame.
+- **The screenshot rig no longer trusts a shell with anything.** Its
+  fake-journalctl shim passed arguments through eval — a search pattern
+  holding a quote broke it, and a command substitution inside one executed —
+  and tmux got PATH and the unitop command spliced into one shell string,
+  which broke on a PATH holding a space and silently screenshotted the real
+  journalctl's permission error. Both now travel as argv (PATH as a tmux
+  environment entry), the shim's journal cache is keyed on the message
+  content and built in a per-run directory renamed into place only when
+  finished, a dead pane aborts the run loudly, and the hostname comes from
+  uname -n, which coreutils provides.
 
 ### Changed
 

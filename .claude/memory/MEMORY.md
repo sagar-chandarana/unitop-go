@@ -21,6 +21,7 @@
 - [Rendering bugs hide in sizes nobody tests](feedback_layout_invariant.md) — one over-wide line spoils the whole screen; the matrix that found six, and why to re-run it with the backstop off
 - [`-H` needs no second machine](feedback_verify_remote_with_local_sshd.md) — `docs/helpers/local-sshd.sh`; it settled a wrong report about ssh's `--` that reading could not
 - [Go + nix loop: vendor, git add, then build](feedback_go_nix_workflow.md) — `nix build` also runs the tests, in a sandbox with no systemd/network
+- [runtimeInputs must cover every command — hostname is not in coreutils](project_runtimeinputs_coverage.md) — gaps hide behind ambient PATH and only die in minimal environments; prefer `uname -n`
 - [Remote poll is one shell line and two ssh round trips](project_remote_poll.md) — a `#` in the marker once silently emptied the unit list
 - [Why exec and not D-Bus, with the measurements](project_dbus_vs_exec.md) — 1.7× at best, the journal and `-H` both still need exec; a poll costs ~265ms so `-i 250ms` is already saturated
 

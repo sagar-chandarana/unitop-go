@@ -405,9 +405,9 @@ the shared `UT-###` sequence from the queue above.
   notice, whenever the buffer is non-empty.
 - **Review outcome:** Duplicate of UT-009 — recorded there; the call-site evidence (resize handler, full-view toggle and exit, syncJournal early-return) is folded into UT-009's outcome.
 
-#### [ ] UT-022 — Stop `fake-journalctl.sh` eval'ing hand-quoted arguments
+#### [x] UT-022 — Stop `fake-journalctl.sh` eval'ing hand-quoted arguments
 
-- **Status:** Accepted — unimplemented
+- **Status:** Accepted — implemented
 - **Confidence:** High; kept as plausible (defect proven from the code; the
   four scripted screenshot invocations never press `/`, so it needs an
   interactive run to trigger)
@@ -418,19 +418,20 @@ the shared `UT-###` sequence from the queue above.
   interactive filter editor at `src/model.go:401`).
 - **Impact:** Running unitop interactively under the fake rig (which the
   script's header invites) and searching for `can't` kills the shim with an
-  unbalanced-quote syntax error; a pattern like `';id;'` executes `id` as the
-  screenshotting user. Dev/docs tooling only — the shipped binary is not
-  affected.
+  unbalanced-quote syntax error; a value that smuggles a closing quote plus a
+  `$(…)` substitution executes it as the screenshotting user (reproduced —
+  a plain `';id;'` does not run, since the leading exec succeeds). Dev/docs
+  tooling only — the shipped binary is not affected.
 - **Suggested resolution:** Rebuild positional parameters with
   `set -- "$@" "$a"` and `exec "$REAL" -D "$dir" -q "$@"` — no eval, no
   re-quoting.
 - **Regression coverage:** Drive the shim with arguments containing single
   quotes, spaces, and `;` and assert they arrive as single argv entries.
-- **Review outcome:** Accepted — unimplemented (triaged by Codex/GPT-5, 2026-08-19). Reproduced safely with a cached fake journal and REAL_JOURNALCTL=/bin/true: an ordinary regex exits 0, a pattern containing a single quote exits 2 with an unmatched-quote error, and an argv value containing a quote plus a literal $(touch ...) executes the substitution. The original example is amended: a plain ';id;' does not run after a successful leading exec — the proven form is quote-break plus command substitution. Agreed fix: rebuild positional parameters with set -- and exec without eval.
+- **Review outcome:** Accepted and implemented (triage Codex/GPT-5, implementation Claude Code/Fable 5, 2026-08-19; commit "Pass the screenshot rig's arguments as argv, not through shells"). Triage reproduced the quote-break and the command execution (a quoted $(touch …) ran; a plain ';id;' after a successful exec does not, amending the original example). Fixed by rebuilding the positional parameters with set -- and exec'ing without eval; only the FIRST -u <unit> pair is the selector, so a later value that is literally -u passes through, and a trailing -u is a loud error. Probe-verified: -g "can't $(touch …)" arrives as one argv entry and nothing executes; -g -u survives.
 
-#### [ ] UT-023 — Quote the PATH and args spliced into the tmux session
+#### [x] UT-023 — Quote the PATH and args spliced into the tmux session
 
-- **Status:** Accepted — unimplemented
+- **Status:** Accepted — implemented
 - **Confidence:** High; confirmed
 - **Evidence:** `docs/helpers/screenshot.sh:45` —
   `tmux new-session ... "PATH=$PATH $UNITOP ${ARGS[*]}"` splices PATH unquoted
@@ -450,7 +451,7 @@ the shared `UT-###` sequence from the queue above.
 - **Regression coverage:** Run the screenshot rig with `TMPDIR` set to a path
   containing a space and assert the shim journal (not the real one) is what
   gets captured.
-- **Review outcome:** Accepted — unimplemented (triaged by Codex/GPT-5, 2026-08-19). Reproduced: PATH='/tmp/unitop path:/bin' exits 127 trying to execute path:/bin, and a flattened argv element becomes two arguments. Agreed fix: pass PATH via tmux -e, hand the command over as argv rather than a shell string, and check the pane is alive before capturing.
+- **Review outcome:** Accepted and implemented (same split, same commit). Triage reproduced the PATH splice (exit 127 on a spaced PATH) and argv flattening. Fixed: PATH crosses as a tmux environment entry (-e) and the command as argv, prefixed `env --` so tmux never falls back to sh -c on a single-argument command (zero unitop args with a spaced executable path — probe-verified); pane death — including under remain-on-exit, via #{pane_dead} — aborts the run, checked after the settle sleep and again immediately before the capture. Review widened the scope and the fix follows it: each run gets a mktemp -d workspace and a tmux session named after it (no fixed "shot" session to kill an unrelated run's, or a user's own), a trap kills only that session and removes only that workspace on normal, error, and signal exits, and no global umask — the 0700 workspace comes from mktemp, so the output PNG keeps its normal mode (probe-verified 644). Requires a tmux with new-session -e and multi-argument commands, stated feature-wise in the header; the locked nix app supplies 3.7b.
 
 ### P3 — edge cases and hardening
 
@@ -473,9 +474,12 @@ the shared `UT-###` sequence from the queue above.
   text is stable across appends and equal to the documented cap.
 - **Review outcome:** Accepted (implemented by Claude Code/Fable 5, 2026-08-19; commit "Keep the log window honest about what the buffer holds"). The marker states the retention policy ("buffer full: unitop keeps the newest 20000 lines") rather than any count — per Codex's precision review, printing maxLogLines as "lines held" would still be false while the buffer rides above the cap. Regression: TestBufferFullMarkerIsStable.
 
-#### [ ] UT-025 — Make the fake-journal cache atomic, keyed, and private
+#### [x] UT-025 — Make the fake-journal cache atomic and content-keyed
 
-- **Status:** Accepted — unimplemented (stale/partial caching); cross-UID variant deferred
+_Narrowed 2026-08-20: the shared-directory/"private" portion is NOT shipped —
+the cross-UID variant stays deferred; see the review outcome._
+
+- **Status:** Accepted — implemented (stale/partial caching); cross-UID variant deferred
 - **Confidence:** High for the partial-write and stale-cache claims; kept as
   plausible for the shared-/tmp planting variant (partially mitigated by
   `ln -sf` overwriting)
@@ -496,11 +500,11 @@ the shared `UT-###` sequence from the queue above.
   (`mktemp -d` or `$UID`).
 - **Regression coverage:** Kill the generator mid-write and assert the next
   run regenerates; edit `MSGS` and assert the cache misses.
-- **Review outcome:** Accepted — unimplemented for the stale/partial cache (existence-only key, in-place generation under set -eu with discarded diagnostics; mechanism confirmed at current HEAD by both agents). The cross-UID planting variant stays deferred at Medium confidence until reproduced from a second UID (partially mitigated by ln -sf overwriting). Agreed fix: write-then-rename, content-hash cache key, UID-namespaced directories.
+- **Review outcome:** Accepted and implemented for the stale/partial-cache scope (same split, same commit). The cache key is the unit plus a checksum of its message table; each generation builds in its own mktemp -d under the cache root — outside any -D directory — cleaned by a trap, and only a finished journal is renamed into place, so a failed or concurrent run leaves nothing a retry can trip over even when journal-remote refuses existing output files (probe-verified). The cross-UID planting variant remains open and deferred: per-user paths and umask 077 narrow accidental collisions, they do not make a predictable path private.
 
-#### [ ] UT-026 — Provide `hostname` in the screenshots app's runtimeInputs
+#### [x] UT-026 — Provide `hostname` in the screenshots app's runtimeInputs
 
-- **Status:** Accepted — unimplemented
+- **Status:** Accepted — implemented
 - **Confidence:** High; verified that nixpkgs coreutils ships only `hostid`,
   not `hostname` (it comes from net-tools/inetutils)
 - **Evidence:** `flake.nix:60` — `runtimeInputs = [ tmux perl gawk gnused
@@ -516,7 +520,7 @@ the shared `UT-###` sequence from the queue above.
   `runtimeInputs`, or use `uname -n`.
 - **Regression coverage:** Run the app with an empty ambient PATH and assert
   it completes.
-- **Review outcome:** Accepted — unimplemented (triaged by Codex/GPT-5, 2026-08-19). Confirmed at current HEAD; this host resolves hostname to net-tools, not coreutils. Agreed fix: uname -n (coreutils, already present) rather than a new dependency.
+- **Review outcome:** Accepted and implemented (same split, same commit): uname -n, which coreutils already provides — runtimeInputs untouched, no new dependency. The project_runtimeinputs_coverage memory and its index line ride with this commit.
 
 #### [x] UT-027 — Wrap each visible log entry once per frame, not twice
 
