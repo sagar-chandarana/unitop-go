@@ -136,9 +136,17 @@ type model struct {
 	// see logTotals.shifted, and keep the two in step: bumping it here as well
 	// would quietly restore the full recount on every batch that the memo
 	// exists to avoid.
-	logEpoch     int
-	totals       *logTotals // memoised wrapped height of the buffer
-	loadingOlder bool
+	logEpoch int
+	// journalDiedAt is when a follow stream ended on its own — journalctl
+	// exited — and was retired; the unit and filter it was following ride
+	// along, because the retry gate may defer ONLY the automatic restart of
+	// that same target. Zero time means nothing is owed: the first
+	// successful poll past the gate may start exactly one replacement.
+	journalDiedAt     time.Time
+	journalDiedUnit   string
+	journalDiedFilter logFilter
+	totals            *logTotals // memoised wrapped height of the buffer
+	loadingOlder      bool
 	// logBacklogDone: the first phase of the stream has finished, so an empty
 	// pane is empty because there is nothing, not because it is still reading.
 	logBacklogDone bool
@@ -290,7 +298,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.host = msg.host
 		}
 		m.rebuild()
-		return m, m.syncJournal()
+		return m, m.postPollSync(msg.err == nil)
 
 	case actionResult:
 		return m, m.applyActionResult(msg)
@@ -345,6 +353,28 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if msg.done {
+			// The stream is over: journalctl exited, locally or at the far end
+			// of the ssh. Retire it — syncJournal used to treat the matching
+			// corpse as live forever, and the pane stayed dead until some
+			// unrelated key change. Its goroutine already reaped the child
+			// before sending this batch, so the wait is effectively immediate
+			// and exists for any page fetch the stream still owns. And no
+			// restart from here: a persistently failing journalctl would
+			// hot-loop. The first successful poll after the retry gate, or
+			// any explicit gesture, recovers.
+			m.journal.stopAndWait()
+			m.journalDiedAt = time.Now()
+			m.journalDiedUnit = m.journal.unit
+			m.journalDiedFilter = m.journal.filter
+			m.journal = nil
+			m.loadingOlder = false
+			// The generation dies with the stream: an owned page fetch that
+			// already queued its olderBatch — the wait above proves it
+			// returned, not that its message was consumed — must bounce off
+			// the gen check instead of resurrecting errors or page output
+			// from a retired stream. A duplicate terminal batch bounces the
+			// same way, which is what makes retirement idempotent.
+			m.logGen++
 			return m, nil
 		}
 		return m, waitJournal(m.journal)
@@ -556,12 +586,14 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// One poll now, out of band from the timer. It ignores `paused`, which
 		// is the point: p freezes the table and R steps it one frame. Asking
 		// explicitly also clears a fatal verdict, as it does on the startup
-		// screen — the host may have been upgraded since.
+		// screen — the host may have been upgraded since. And it is the
+		// prompt way back for a dead journal stream: syncJournal directly,
+		// past the automatic retry gate (a no-op while the stream is fine).
 		if !m.polling {
 			m.polling, m.fatal = true, false
-			return m, m.pollCmd()
+			return m, tea.Batch(m.pollCmd(), m.syncJournal())
 		}
-		return m, nil
+		return m, m.syncJournal()
 	case "+":
 		m.interval = clampInterval(m.interval - stepFor(m.interval, -1))
 		return m, nil
@@ -1065,15 +1097,42 @@ func (m *model) clampLogScroll() {
 	}
 }
 
+// postPollSync is syncJournal for the poll path, with the dead-stream rules:
+// the SAME dead unit/filter restarts only on the first SUCCESSFUL poll after
+// a one-second gate — restarting the same failing target off failed or rapid
+// polls is how hot loops start — while a target that changed or vanished
+// reconciles immediately, failed poll or not: the gate protects nothing that
+// is gone. Deliberate gestures (selection, filter, R, pane transitions) call
+// syncJournal directly and owe this gate nothing.
+func (m *model) postPollSync(ok bool) tea.Cmd {
+	if m.journal == nil && !m.journalDiedAt.IsZero() {
+		// The gate may defer only an automatic restart of the SAME dead
+		// target. A selection that moved on — another unit, a slice row,
+		// nothing — must reconcile immediately, or the dead unit's final
+		// lines keep masquerading under the new selection.
+		same := m.journalTarget() == m.journalDiedUnit && m.logFilt == m.journalDiedFilter
+		if same && (!ok || time.Since(m.journalDiedAt) < time.Second) {
+			return nil
+		}
+	}
+	return m.syncJournal()
+}
+
+// journalTarget is the unit the pane wants followed right now, "" when none.
+func (m *model) journalTarget() string {
+	if !m.logPaneVisible() {
+		return ""
+	}
+	if r, ok := m.selectedRow(); ok && r.kind == rowUnit {
+		return r.unit.Name
+	}
+	return ""
+}
+
 // syncJournal makes the log stream follow the selection, restarting journalctl
 // only when the selected unit actually changed. Slice rows have no journal.
 func (m *model) syncJournal() tea.Cmd {
-	want := ""
-	if m.logPaneVisible() {
-		if r, ok := m.selectedRow(); ok && r.kind == rowUnit {
-			want = r.unit.Name
-		}
-	}
+	want := m.journalTarget()
 	// A filter change reruns journalctl, because the filtering happens there.
 	if m.journal != nil && m.journal.unit == want && m.journal.filter == m.logFilt {
 		return nil
@@ -1093,6 +1152,7 @@ func (m *model) syncJournal() tea.Cmd {
 	m.logBacklogDone = false
 	m.loadingOlder, m.logAtStart, m.logLoadErr = false, false, ""
 	m.logGen++
+	m.journalDiedAt = time.Time{} // a deliberate sync settles any debt
 	if want == "" {
 		return nil
 	}

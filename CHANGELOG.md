@@ -10,6 +10,15 @@ to change.
 
 ### Fixed
 
+- **A journal stream that dies comes back.** When journalctl exited — a
+  transient failure, an ssh blip — the pane kept its final lines but nothing
+  ever restarted the tail: the model held the dead stream and mistook it for
+  live until the unit or filter changed. The stream is retired on its final
+  batch now. The first successful poll after a one-second retry gate starts
+  exactly one replacement for that same unit, and never off a failed poll,
+  so a broken journalctl cannot hot-loop. A selection that moved on
+  reconciles at once, and R — or any deliberate change — brings the tail
+  back immediately.
 - **Reading a journal no longer gambles memory on its contents.** The backlog
   and every backwards page were parsed whole before the first line reached
   the pane — hundreds of near-limit entries at once. They stream now: the

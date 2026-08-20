@@ -212,9 +212,9 @@ hardening opportunity.
   buffer fits and when scrolled to the absolute beginning.
 - **Review outcome:** Accepted (implemented by Claude Code/Fable 5, 2026-08-19; commit "Keep the log window honest about what the buffer holds"). The top marker is a virtual display line above the buffer: clampLogScroll/atTopOfLog gain one step and renderLogWindow prepends the marker into the room the walk leaves. No existing test encoded the replacement in the end; TestLogWindowMatchesTheReference passed unchanged. Regression: TestTopMarkerDoesNotEatData.
 
-#### [ ] UT-012 — Clear or restart a journal stream after it ends
+#### [x] UT-012 — Clear or restart a journal stream after it ends
 
-- **Status:** Pending review
+- **Status:** Accepted — implemented
 - **Confidence:** High
 - **Evidence:** A matching-generation `journalBatch{done:true}` returns from
   `src/model.go:331-334` without clearing `m.journal`. The synchronization path
@@ -225,7 +225,7 @@ hardening opportunity.
   the next synchronization opportunity, with backoff if needed.
 - **Regression coverage:** End a same-generation stream, trigger normal and
   manual polls, and assert that exactly one replacement stream starts.
-- **Review outcome:** _Pending._
+- **Review outcome:** Accepted and implemented (triage Codex/GPT-5, implementation Claude Code/Fable 5, 2026-08-20; commit "Let a dead journal stream come back"). A matching-generation terminal batch now retires the stream after its final lines land — stopAndWait (already-reaped, so effectively immediate; it exists for owned page fetches), pointer cleared, loading state cleared, death time recorded — and deliberately returns no restart command: a persistently failing journalctl must not hot-loop. Recovery is via postPollSync: the FIRST successful poll after the one-second retry gate starts exactly one replacement of the SAME dead unit/filter — a successful poll inside the gate deliberately starts nothing for it, and failed polls never restart it; a target that changed or vanished reconciles immediately, failed poll or not. Explicit gestures — R (now batching syncJournal), selection/filter changes, pane transitions — go through syncJournal directly, past the gate, which any deliberate sync resets. Stale-generation terminal batches cannot touch the live stream; hidden-pane polls start nothing. Review added two hardenings, both in: retirement bumps the generation (an owned page result already queued in bubbletea bounces instead of resurrecting a retired stream's errors or output, and duplicate terminal batches are inert the same way), and the gate holds the dead target's identity (unit+filter) so it defers ONLY the automatic same-target restart — a selection that moved on, or a poll that removed the unit entirely, reconciles immediately inside the gate window. Regressions: TestDeadStreamRetiresWithoutRestart, TestDeadStreamRestartsOnNextSuccessfulPoll (exactly one, no churn after), TestDeadStreamGateHoldsUnderFastPolls, TestFailedPollDoesNotRestartDeadTarget, TestExplicitRetryBypassesTheGate, TestStaleDoneCannotKillTheLiveStream, TestNoRestartWhilePaneHidden (plus the deliberate reopen recovering), TestQueuedPageResultBouncesOffRetirement, TestDuplicateTerminalBatchIsInert, TestGateDoesNotDeferReconciliation (selection moved via the real key path), TestRemovedUnitReconcilesImmediately (the poll removes the dead unit; rebuild reanchors; immediate reconciliation inside the gate). No memory added: the same-target gate rule is stated at postPollSync and derivable from it.
 
 #### [x] UT-013 — Surface journal stderr while a follow remains alive
 
