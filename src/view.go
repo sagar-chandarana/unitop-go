@@ -151,9 +151,9 @@ type logTotals struct {
 //
 // Both halves matter. Extending alone still recounted everything whenever a
 // batch trimmed — at the cap that is every few hundred batches, each time the
-// ride over the trim slack ends — and every one of those frames cost 34ms and
-// 27MB, in the state a chatty service ends up in and stays. Both ends of the buffer are known at the call site, so both can be
-// accounted for.
+// ride over the trim slack ends — and every one of those frames cost 34ms
+// and 27MB, in the state a chatty service ends up in and stays. Both ends of
+// the buffer are known at the call site, so both can be accounted for.
 //
 // It refuses unless the memo describes exactly the buffer that changed; a page
 // prepended at the top, or a change of width or wrapping, still falls back to a

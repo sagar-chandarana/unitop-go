@@ -66,18 +66,28 @@ func benchModel(w, h, units, logs int, tree bool) *model {
 	return &m
 }
 
+// primeBuffer counts the buffer once, before the timer starts, and hands back
+// the memo value that describes it — the snapshot holdBufferAt restores.
+func primeBuffer(m *model) logTotals {
+	m.logEpoch++
+	_ = m.logDisplayTotal()
+	return *m.totals
+}
+
 // holdBufferAt pins a benchmark's buffer, off the timer: back to its starting
 // length, with the memo describing it again. Left to grow four lines per
 // iteration, the light-traffic buffers crossed the trim threshold around
 // iteration ~5400 and the full one mixed append and trim frames in whatever
 // ratio -benchtime happened to buy — so short and long runs measured
-// different workloads. The recount happens here, off the timer, so the timed
-// path stays the shifted fast path that production takes.
-func holdBufferAt(b *testing.B, m *model, logs int) {
+// different workloads. The memo is restored from the one snapshot primeBuffer
+// took, not recounted: an off-timer recount of a 20k buffer per iteration is
+// hidden work that allocates, drives GC, and warms exactly the entries the
+// timed frame reads (measured: ~7s of wall clock for 0.5s of timed work).
+func holdBufferAt(b *testing.B, m *model, logs int, snap logTotals) {
 	b.StopTimer()
 	m.logs = m.logs[:logs]
-	m.logEpoch++
-	_ = m.logDisplayTotal() // prime just the memo: a whole View() would churn the timed heap
+	m.logEpoch = snap.epoch
+	*m.totals = snap
 	b.StartTimer()
 }
 
@@ -90,10 +100,11 @@ func BenchmarkView(b *testing.B) {
 	m := benchModel(132, 40, 120, 500, false)
 	arriving := benchLogs(4)
 	m.logs = append(m.logs, arriving...)[:500] // pre-grow the backing array off the timer
+	snap := primeBuffer(m)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		holdBufferAt(b, m, 500)
+		holdBufferAt(b, m, 500, snap)
 		m.Update(journalBatch{gen: m.logGen, lines: arriving})
 		_ = m.View()
 	}
@@ -125,10 +136,11 @@ func BenchmarkViewWide(b *testing.B) {
 	m := benchModel(200, 60, 120, 500, false)
 	arriving := benchLogs(4)
 	m.logs = append(m.logs, arriving...)[:500] // pre-grow the backing array off the timer
+	snap := primeBuffer(m)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		holdBufferAt(b, m, 500)
+		holdBufferAt(b, m, 500, snap)
 		m.Update(journalBatch{gen: m.logGen, lines: arriving})
 		_ = m.View()
 	}
@@ -138,10 +150,11 @@ func BenchmarkViewTree(b *testing.B) {
 	m := benchModel(132, 40, 120, 500, true)
 	arriving := benchLogs(4)
 	m.logs = append(m.logs, arriving...)[:500] // pre-grow the backing array off the timer
+	snap := primeBuffer(m)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		holdBufferAt(b, m, 500)
+		holdBufferAt(b, m, 500, snap)
 		m.Update(journalBatch{gen: m.logGen, lines: arriving})
 		_ = m.View()
 	}
@@ -185,10 +198,11 @@ func BenchmarkViewFullBuffer(b *testing.B) {
 	m := benchModel(132, 40, 120, maxLogLines, false)
 	arriving := benchLogs(4)
 	m.logs = append(m.logs, arriving...)[:maxLogLines] // pre-grow off the timer
+	snap := primeBuffer(m)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		holdBufferAt(b, m, maxLogLines)
+		holdBufferAt(b, m, maxLogLines, snap)
 		m.Update(journalBatch{gen: m.logGen, lines: arriving})
 		_ = m.View()
 	}
@@ -202,13 +216,14 @@ func BenchmarkViewFullBufferTrim(b *testing.B) {
 	arriving := benchLogs(4)
 	template := append([]logLine(nil), m.logs...)
 	m.logs = append(m.logs, arriving...)[:len(template)] // pre-grow off the timer
+	snap := primeBuffer(m)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		m.logs = append(m.logs[:0], template...) // a trim rearranges the slice; restore it
-		m.logEpoch++
-		_ = m.logDisplayTotal()
+		m.logEpoch = snap.epoch
+		*m.totals = snap
 		b.StartTimer()
 		m.Update(journalBatch{gen: m.logGen, lines: arriving})
 		_ = m.View()
