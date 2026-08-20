@@ -250,12 +250,30 @@ func waitJournal(js *journalStream) tea.Cmd {
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		wasVisible := m.logPaneVisible()
 		m.width, m.height = msg.Width, msg.Height
 		m.ready = true
 		m.clampCursor()
 		// The log re-wraps to the new width, so the scroll offset can now point
 		// past the whole buffer — and an over-scrolled pane reads as empty.
 		m.clampLogScroll()
+		// Focus may not rest on a pane that is not there: shrinking under the
+		// 84-column split left the table's keys dead while the arrows moved
+		// an invisible log. Healed unconditionally — any resize repairs an
+		// already-invalid state, not only a threshold crossing.
+		if !m.logPaneVisible() && m.focus == focusLogs {
+			m.focus = focusList
+		}
+		// A visibility flip is a deliberate pane transition. Hiding stops the
+		// stream — its journalctl ran on behind an invisible pane, forever —
+		// and showing starts the selected unit's stream immediately, paused or
+		// fatal notwithstanding: direct syncJournal, not the poll path's
+		// dead-stream gate. Height-only and visible→visible width changes
+		// churn nothing, and fullView (visible at any width) and
+		// showLogs=false (visible at none) cross no threshold here.
+		if m.logPaneVisible() != wasVisible {
+			return m, m.syncJournal()
+		}
 		return m, nil
 
 	case tickMsg:

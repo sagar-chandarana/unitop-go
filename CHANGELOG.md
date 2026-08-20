@@ -10,6 +10,14 @@ to change.
 
 ### Fixed
 
+- **Resizing reconciles the log pane instead of stranding it.** Shrinking
+  under the 84-column split left focus on the invisible pane — table keys
+  dead, arrows scrolling a log nobody could see — with its journalctl still
+  running behind the curtain; growing back sometimes exposed a pane with no
+  stream at all until the next poll happened to fix it. A resize now heals
+  focus unconditionally and treats a visibility flip as the pane transition
+  it is: hiding stops the stream, showing starts the selected unit's stream at
+  once, paused or not.
 - **A remote host's clock no longer bends its uptimes or its journal.**
   Unit uptimes were computed by subtracting the remote wall clock's stamps
   from the client's — skew made them negative or inflated. Every remote
