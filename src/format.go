@@ -196,12 +196,22 @@ func shortUnit(name string) string {
 	return unescapeUnit(strings.TrimSuffix(name, ".service"))
 }
 
-// tailCells keeps the last w terminal cells of s. It is for the filter editor
-// on a terminal narrower than what has been typed: the end of the text is
-// where the cursor is, so the end is what to show.
+// tailCells keeps the last w terminal cells of s — whole grapheme clusters
+// only, measured in cells. TruncateLeft could retain a boundary-spanning CJK
+// glyph and hand back w+1 cells, which pushed the caret of a full filter
+// editor off the edge. Dropping the straddling cluster entirely keeps the
+// width at or under w; the caret matters more than half a glyph.
 func tailCells(s string, w int) string {
-	if n := ansi.StringWidth(s); n > w {
-		return ansi.TruncateLeft(s, n-w, "")
+	total := ansi.StringWidth(s)
+	if total <= w {
+		return s
 	}
-	return s
+	drop := total - w
+	rest, state, dropped := s, -1, 0
+	for len(rest) > 0 && dropped < drop {
+		var gw int
+		_, rest, gw, state = uniseg.FirstGraphemeClusterInString(rest, state)
+		dropped += gw
+	}
+	return rest
 }

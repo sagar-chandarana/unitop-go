@@ -1009,12 +1009,15 @@ func (m model) menuItemAt(x, y int) int {
 	if !m.menu.open {
 		return -1
 	}
-	w := m.menuBoxWidth()
-	i := y - m.menu.y - 1
-	if x < m.menu.x || x >= m.menu.x+w || i < 0 || i >= len(unitActions) {
+	// Through the SAME geometry the draw used: a click can only land on a
+	// row that is actually there, and the viewport offset maps it back to
+	// the action it shows.
+	gx, gy, w, first, visible := m.menuGeometry()
+	i := y - gy - 1
+	if x < gx || x >= gx+w || i < 0 || i >= visible {
 		return -1
 	}
-	return i
+	return first + i
 }
 
 func (m *model) afterCursorMove() tea.Cmd {

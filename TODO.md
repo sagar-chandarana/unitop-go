@@ -184,9 +184,9 @@ hardening opportunity.
   terminal, and enter/leave full view without losing visible content.
 - **Review outcome:** Accepted (implemented by Claude Code/Fable 5, 2026-08-19; commit "Keep the log window honest about what the buffer holds"). UT-021 pinned the unclamped sites: the tea.WindowSizeMsg handler, activateRow's full-view toggle, and escape()'s full-view exit — all three now call clampLogScroll, and renderLogWindow re-aims a stale offset at the buffer top instead of rendering the empty-pane notice. Regressions: TestGeometryChangesReclampTheLogScroll, TestOverScrolledWindowShowsTheBufferNotTheEmptyNotice.
 
-#### [ ] UT-010 — Keep every action-menu choice visible and positioned
+#### [x] UT-010 — Keep every action-menu choice visible and positioned
 
-- **Status:** Pending review
+- **Status:** Accepted — implemented
 - **Confidence:** High
 - **Evidence:** The popup created by `src/actions.go:146-168` requires 12 rows,
   while `src/view.go:186-193` supports usable heights down to 10. Coordinates
@@ -198,7 +198,7 @@ hardening opportunity.
   execute.
 - **Regression coverage:** Open and navigate every action at each supported
   height, then resize in every direction with the menu and confirmation open.
-- **Review outcome:** _Pending._
+- **Review outcome:** Accepted and implemented (triage Codex/GPT-5, implementation Claude Code/Fable 5, 2026-08-20; commit "Keep the action menu visible, and cut text on graphemes"). menuGeometry is the one current-geometry answer: clamped anchor, drawn width, and an action VIEWPORT (first/visible) chosen so the cursor is always inside it — draw (menuBox renders exactly the viewport, with honest ↑n / "n more ↓" markers), the overlay anchor, and the mouse hit-test (viewport offset mapped back) all ask it, and openMenu stores only the wish, so a resize between open and render cannot strand anything: the geometry is recomputed at every use. The confirmation dialog was confirmed NOT stale in triage (it recentres each render) and was left alone. Regressions: TestEveryActionVisibleBeforeExecuteAtAllHeights (heights 10..17, every action visibly selected before Enter can fire, viewport containment at each step), TestMenuWrapHomeEndStayVisible (at the tightest supported height), TestMouseMapsThroughTheViewport (k-th drawn row = first+k, border and beyond = none), TestMenuSurvivesResizeInEveryDirection (five directions, selection proven on its exact drawn row — "start" can never pass by matching inside "restart" — popup contained), TestConfirmationSurvivesResizeCentred (a destructive confirmation stays centred, fully visible, same action pending through four resize directions — pinning the dynamic positioning triage confirmed correct), TestHostileAnchorSurvivesShrink (a bottom-right click anchor at 200×40 shrunk to 100×12 and 40×10: contained, selection on its drawn row — the previously confirmed staleness mechanism), and TestMenuStaysInsideThePane re-anchored to assert through menuGeometry. All selection assertions go through a shared selectedMenuRow helper that inspects the exact drawn row.
 
 #### [x] UT-011 — Do not overwrite the oldest visible journal line
 
@@ -358,9 +358,9 @@ hardening opportunity.
   result must be a retryable error, not a fatal version-0 verdict.
 - **Review outcome:** Accepted and implemented (same split, same commit). Triage proved both halves: `ssh -G -o RequestTTY=force` resolves to `requesttty force` and against the local sshd a forced tty destroyed the command framing, while prepending -T resolved to `requesttty false` and restored it — so every runner invocation now carries -T. The remote poll pipeline preserves the version command's own status (`systemctl --version || exit`, no head, stderr riding the ssh exit error) so a probe failure is a retryable "remote poll" error instead of a fatal version-0 verdict even when later commands would succeed. parseRemotePoll replaces the boolean-ignoring Cuts: CRLF normalized, and a delimiter counts only when a WHOLE line equals the marker — unit descriptions are arbitrary text and may contain marker tokens, which stay data — exactly one of each, in order; anything else is a retryable malformed-poll error, never a successful zero-unit poll. Verified end to end over docs/helpers/local-sshd.sh with a real sshd: 105 units, host stats and a live journal through the private mux with -T. Regressions: TestRemoteArgvShape (incl. the valid host/--/single-command shape and quoting), TestParseRemotePollFraming (LF, CRLF, missing/duplicated/reversed marker lines), TestMarkerTokensInsideDataStayData (marker tokens embedded in and suffixing unit descriptions parse as data; duplicated standalone marker lines still fail), TestRemoteVersionFailureIsRetryable (fake ssh executes the real joined command; version fails with stderr while later commands would succeed → retryable with the message; then a healthy fake polls one unit through the strict framing).
 
-#### [ ] UT-020 — Make all clipping and menu sizing grapheme-aware
+#### [x] UT-020 — Make all clipping and menu sizing grapheme-aware
 
-- **Status:** Pending review
+- **Status:** Accepted — implemented
 - **Confidence:** High
 - **Evidence:** `src/view.go:1314-1350` slices styled text rune by rune and can
   split combining or ZWJ grapheme clusters. `src/format.go:199-206` can retain
@@ -375,7 +375,7 @@ hardening opportunity.
 - **Regression coverage:** Add combining marks, CJK, flags, skin-tone emoji,
   and family ZWJ sequences at every clipping boundary; assert both content and
   exact frame width.
-- **Review outcome:** _Pending._
+- **Review outcome:** Accepted and implemented for the narrowed triage scope (same split, same commit): sliceANSI walks grapheme clusters with cell widths — a cut inside a wide cluster skips it whole and pads the overshoot, the boundary style survives onto the tail; tailCells drops whole clusters until the suffix measures within budget (the caret's spare cell is the point); menuWidth counts terminal cells. Other clipping helpers already use grapheme-aware x/ansi and were not claimed or touched. Regressions: TestSliceANSIRespectsGraphemes (CJK straddle+pad, aligned cut, combining marks both sides, ZWJ family, flag AND skin-tone-modified emoji emitting padding never fragments, styled boundary), TestTerminalStraddlePadSurvives (the review-found production edge: a cut inside the line's FINAL wide cluster keeps its load-bearing pad, plain and styled, and a composed overlay row stays exactly the original width), TestOverlayStaysAlignedOverWideText (CJK/emoji under the popup: nothing exceeds the width and every overlaid row is exactly full; the unpadded footer is by design), TestTailCellsKeepsWholeClusters (CJK/ZWJ/skin-tone/combining suffix ≤ budget and a true suffix; caret room), TestNarrowEditorKeepsTheCaret (the original failure end to end: a 40-column View with twenty CJK glyphs in the live filter — caret present, no row over 40 cells), TestMenuWidthCountsCells (CJK title width, the wide title landing EXACTLY on the 40-cell cap, and every drawn line agreeing).
 
 ## Pending review — Claude Code
 

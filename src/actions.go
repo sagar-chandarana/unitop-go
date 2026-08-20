@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"time"
 
@@ -164,18 +165,10 @@ func (m *model) openMenu(unit string, x, y int) {
 		}
 		return
 	}
-	// Keep the popup inside the pane's box. Overrunning it breaks the outline
-	// and lands on the footer, which reads as a rendering fault rather than as
-	// a popup.
-	h := len(unitActions) + 2
-	w := min(menuWidth(unit), max(8, m.width-2))
-	if x+w > m.width-1 {
-		x = max(1, m.width-1-w)
-	}
-	top, bottom := m.headerLines()+1, m.headerLines()+1+m.paneInner()
-	if y+h > bottom {
-		y = max(top, bottom-h)
-	}
+	// The anchor is a wish. menuGeometry clamps it against the CURRENT
+	// geometry at every render, hit-test and keypress, so a resize between
+	// opening and looking cannot strand the popup — or its selection —
+	// somewhere invisible.
 	m.menu = ctxMenu{open: true, unit: unit, x: x, y: y}
 }
 
@@ -192,11 +185,35 @@ func (m model) menuBoxWidth() int {
 const menuMaxWidth = 40
 
 func menuWidth(unit string) int {
-	w := len([]rune(shortUnit(unit))) + 4
+	// Terminal CELLS, not runes: a CJK or emoji unit title is twice as wide
+	// as its rune count says, and a rune-counted box truncated it mid-glyph.
+	w := ansi.StringWidth(shortUnit(unit)) + 4
 	for _, a := range unitActions {
-		if n := len([]rune(a.label)) + 4; n > w {
+		if n := ansi.StringWidth(a.label) + 4; n > w {
 			w = n
 		}
 	}
 	return min(w, menuMaxWidth)
+}
+
+// menuGeometry is the one answer to where the popup is and what it shows:
+// the clamped anchor, the drawn width, and the action viewport — first and
+// visible pick the slice of unitActions on screen, chosen so the cursor is
+// ALWAYS inside it. Draw, anchoring and the mouse hit-test all ask this one
+// function; ten actions need twelve rows and a supported height of ten has
+// five, and the old fixed-height overlay silently dropped rows the keyboard
+// could still select and Enter would still execute.
+func (m model) menuGeometry() (x, y, w, first, visible int) {
+	w = m.menuBoxWidth()
+	top := m.headerLines() + 1
+	bottom := top + m.paneInner()
+	rows := min(len(unitActions)+2, max(3, bottom-top))
+	visible = rows - 2
+	// Slide only as far as the cursor demands; stateless, so it cannot go
+	// stale. At the top of the list the window starts there; past the end
+	// of the window it follows the cursor.
+	first = max(0, min(m.menu.cursor, len(unitActions)-visible))
+	x = min(max(1, m.menu.x), max(1, m.width-1-w))
+	y = min(max(top, m.menu.y), max(top, bottom-rows))
+	return x, y, w, first, visible
 }

@@ -10,6 +10,18 @@ to change.
 
 ### Fixed
 
+- **The action menu can no longer execute what it is not showing.** Ten
+  actions need twelve rows; a ten-row terminal has five. The popup is a
+  viewport now — it follows the selection, says "↑n" and "n more ↓" at its
+  edges, and one geometry answer drives the drawing, the anchoring and the
+  mouse, recomputed at every use — so a resize cannot strand an invisible
+  selection, and a click lands on the row it sees.
+- **Text is cut on grapheme clusters, in terminal cells.** The popup's
+  right-edge cut tore combining accents from their bases and split ZWJ
+  emoji; a cut inside a double-width glyph now skips it whole and pads, so
+  frames stay straight over CJK text; the filter editor's tail keeps whole
+  clusters within its budget, keeping the caret on screen; and the menu
+  sizes its box by cells, not runes.
 - **Resizing reconciles the log pane instead of stranding it.** Shrinking
   under the 84-column split left focus on the invisible pane — table keys
   dead, arrows scrolling a log nobody could see — with its journalctl still

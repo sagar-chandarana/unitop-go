@@ -125,15 +125,19 @@ func TestReadOnlyBlocksTheMenu(t *testing.T) {
 // The popup stays inside the pane's box. Overrunning it breaks the outline and
 // lands on the footer, which reads as a rendering fault rather than as a popup.
 func TestMenuStaysInsideThePane(t *testing.T) {
+	// The stored anchor is a wish; menuGeometry is what every consumer —
+	// draw, hit-test, overlay — actually uses, so the containment invariant
+	// is asserted THERE, against the current geometry.
 	m := actionModel(t)
 	m.openMenu("nginx.service", m.width-2, m.height-2)
-	w, h := menuWidth("nginx.service"), len(unitActions)+2
-	if m.menu.x < 1 || m.menu.x+w > m.width-1 {
-		t.Errorf("menu crosses a side border: x=%d w=%d width=%d", m.menu.x, w, m.width)
+	x, y, w, _, visible := m.menuGeometry()
+	rows := visible + 2
+	if x < 1 || x+w > m.width-1 {
+		t.Errorf("menu crosses a side border: x=%d w=%d width=%d", x, w, m.width)
 	}
 	top, bottom := m.headerLines()+1, m.headerLines()+1+m.paneInner()
-	if m.menu.y < top || m.menu.y+h > bottom {
-		t.Errorf("menu runs outside rows %d..%d: y=%d h=%d", top, bottom, m.menu.y, h)
+	if y < top || y+rows > bottom {
+		t.Errorf("menu runs outside rows %d..%d: y=%d rows=%d", top, bottom, y, rows)
 	}
 }
 

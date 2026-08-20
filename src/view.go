@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/rivo/uniseg"
 )
 
 // paneGap is what sits between the two panes contents: each pane's own border
@@ -1334,8 +1335,10 @@ func (m model) overlayMenu(lines []string) []string {
 	} else {
 		box = m.menuBox()
 	}
-	x, y := m.menu.x, m.menu.y
+	x, y, _, _, _ := m.menuGeometry()
 	if m.menu.confirm {
+		// The confirmation recentres itself at every render; it cannot go
+		// stale the way a stored anchor can.
 		x = max(0, (m.width-lipgloss.Width(box[0]))/2)
 		y = max(0, m.height/2-len(box)/2)
 	}
@@ -1358,42 +1361,63 @@ func (m model) overlayMenu(lines []string) []string {
 }
 
 // sliceANSI returns the part of s from visible column `from` onward, carrying
-// the styling that was in effect there so the tail keeps its colours.
+// the styling that was in effect there so the tail keeps its colours. It
+// walks GRAPHEME CLUSTERS, not runes: an accent or a ZWJ-joined emoji must
+// never be torn from its base, and when the cut lands inside a double-width
+// cluster the whole cluster is skipped and the overshoot padded with spaces
+// — the popup's right edge stays a straight line, and the tail resumes at
+// exactly the cell it covered.
 func sliceANSI(s string, from int) string {
 	var style, out strings.Builder
-	var esc strings.Builder
-	visible, inEsc := 0, false
-	for _, r := range s {
-		if r == '\x1b' {
-			inEsc = true
-			esc.Reset()
-			esc.WriteRune(r)
-			continue
-		}
-		if inEsc {
-			esc.WriteRune(r)
-			if r == 'm' {
-				inEsc = false
-				// Sequences before the cut set the state we must restore;
-				// after it they belong to the output verbatim.
-				if visible < from {
-					style.WriteString(esc.String())
-				} else {
-					out.WriteString(esc.String())
-				}
+	visible := 0
+	padded := false
+	rest := s
+	for len(rest) > 0 {
+		if rest[0] == '\x1b' {
+			// A whole SGR sequence: before the cut it sets the state to
+			// restore; after it, it belongs to the tail verbatim.
+			end := strings.IndexByte(rest, 'm')
+			if end < 0 {
+				break // a torn sequence at the end; drop it
 			}
+			if visible < from {
+				style.WriteString(rest[:end+1])
+			} else {
+				out.WriteString(rest[:end+1])
+			}
+			rest = rest[end+1:]
 			continue
 		}
-		if visible >= from {
-			out.WriteRune(r)
+		seg := rest
+		if i := strings.IndexByte(rest, '\x1b'); i >= 0 {
+			seg = rest[:i]
 		}
-		// Cells, not runes. Counting runes put the cut in the wrong place on any
-		// row with a double-width name — the overlay is positioned in cells, so
-		// the tail resumed from a column that was not the one it covered.
-		visible += ansi.StringWidth(string(r))
+		rest = rest[len(seg):]
+		state := -1
+		for len(seg) > 0 {
+			var cl string
+			var gw int
+			cl, seg, gw, state = uniseg.FirstGraphemeClusterInString(seg, state)
+			switch {
+			case visible+gw <= from:
+				// wholly left of the cut: styling already collected
+			case visible >= from:
+				out.WriteString(cl)
+			default:
+				// The cut lands inside this cluster: skip it whole and pad
+				// the overshoot, so the columns still line up.
+				out.WriteString(strings.Repeat(" ", visible+gw-from))
+				padded = true
+			}
+			visible += gw
+		}
 	}
-	if strings.TrimSpace(stripSGR(out.String())) == "" {
-		return "" // nothing but padding out there
+	// Ignorable original trailing whitespace is dropped as ever — but a
+	// STRUCTURAL overshoot pad is load-bearing: an overlay whose right cut
+	// lands inside the line's final wide cluster needs that one cell, or
+	// the row comes up short.
+	if !padded && strings.TrimSpace(stripSGR(out.String())) == "" {
+		return ""
 	}
 	return style.String() + out.String()
 }
@@ -1418,12 +1442,18 @@ func stripSGR(s string) string {
 }
 
 func (m model) menuBox() []string {
-	// Never wider than the terminal: a box cut off at the right edge reads as a
-	// broken frame rather than a popup.
-	w := m.menuBoxWidth()
+	// Never wider than the terminal, never taller than the pane: the box
+	// draws exactly the viewport menuGeometry chose, and says when there is
+	// more above or below it.
+	_, _, w, first, visible := m.menuGeometry()
 	border := stBase
-	out := []string{border.Render("╭") + stHeader.Render(pad(" "+truncRunes(shortUnit(m.menu.unit), w-3)+" ", w-2)) + border.Render("╮")}
-	for i, a := range unitActions {
+	title := " " + truncRunes(shortUnit(m.menu.unit), w-3-4) + " "
+	if first > 0 {
+		title = fmt.Sprintf(" ↑%d%s", first, title)
+	}
+	out := []string{border.Render("╭") + stHeader.Render(pad(title, w-2)) + border.Render("╮")}
+	for i := first; i < first+visible; i++ {
+		a := unitActions[i]
 		label := pad(" "+a.label, w-2)
 		st := stBase
 		if a.confirm {
@@ -1434,7 +1464,14 @@ func (m model) menuBox() []string {
 		}
 		out = append(out, border.Render("│")+st.Render(label)+border.Render("│"))
 	}
-	return append(out, border.Render("╰"+strings.Repeat("─", w-2)+"╯"))
+	bottom := strings.Repeat("─", w-2)
+	if below := len(unitActions) - (first + visible); below > 0 {
+		tag := fmt.Sprintf(" %d more ↓ ", below)
+		if tw := len([]rune(tag)); tw+2 <= w-2 {
+			bottom = "─" + tag + strings.Repeat("─", w-3-tw)
+		}
+	}
+	return append(out, border.Render("╰"+bottom+"╯"))
 }
 
 func (m model) confirmBox() []string {
