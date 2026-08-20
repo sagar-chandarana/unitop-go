@@ -36,6 +36,11 @@ to change.
   moment after a wheel scroll, before the log catches up to the highlight, the
   pane used to show the new unit's name over the previous unit's lines. It now
   names the unit the lines actually belong to until the new one loads.
+- **Typing a log filter no longer disturbs the journal mid-edit.** A scroll
+  still settling, or a click or right-click while you were typing, could
+  restart `journalctl` with the half-typed filter or open the action menu over
+  the editor. The filter editor now owns input — keyboard and mouse — until you
+  press Enter or Esc.
 - **The help screen no longer lets keys and clicks fall through to the
   hidden panes.** With help open, pressing enter, a sort key, or the action
   key — or scrolling and clicking with the mouse — used to drive the table,

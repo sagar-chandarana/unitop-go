@@ -451,6 +451,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.gen != m.journalSettleGen {
 			return m, nil
 		}
+		// While the log filter is being typed, the editor owns journal syncing
+		// and defers it to Enter/Esc; a settle firing now would restart
+		// journalctl with the half-typed filter. The editor's close-sync picks
+		// up the current selection and the finished filter together.
+		if m.filterInput && m.filterLogs {
+			return m, nil
+		}
 		return m, m.syncJournal()
 
 	case tea.MouseMsg:
@@ -971,6 +978,23 @@ func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// The table's box takes four columns of its own — two borders and the air
 	// inside them — so the log pane begins four past the table's content.
 	overLogs := m.logPaneVisible() && (m.fullView || msg.X >= m.tableWidth()+4)
+
+	// A filter is being typed: the editor owns input, exactly as it does for the
+	// keyboard. The wheel may still scroll the log being filtered, but clicks
+	// and the list wheel must not drive the table, restart the journal with the
+	// half-typed filter, or open a menu behind the editor.
+	if m.filterInput {
+		if overLogs {
+			switch msg.Button {
+			case tea.MouseButtonWheelUp:
+				return m, m.scrollLog(3)
+			case tea.MouseButtonWheelDown:
+				return m, m.scrollLog(-3)
+			}
+		}
+		return m, nil
+	}
+
 	switch msg.Button {
 	case tea.MouseButtonWheelUp:
 		if overLogs {

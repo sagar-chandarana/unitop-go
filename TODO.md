@@ -936,6 +936,74 @@ ack → commit loop.
   then this commit for the host-name doc reconciliation (theme.go paragraph
   dedup + colourless-list correction, CHANGELOG colourless line, this record).
 
+#### [x] UT-042 — Close the four UT-040 settle-window seams
+
+- **Status:** Accepted — implemented in two commits (log-pane naming;
+  filter-editor input ownership)
+- **Source:** Codex audit of UT-040 (`0b70c78`). Four variants, each reproduced
+  with a failing test before its fix. `e05fe64`/`0b70c78` stay immutable —
+  these are follow-on fixes.
+- **Seam 1 — the log pane titled another unit's lines.** During the 150 ms
+  settle window `m.selected` has moved but `m.journal`/`m.logs` still belong to
+  the streamed unit; `logTitle` named `selectedUnit()`, so the streamed unit's
+  lines rendered under the new selection's name (test proved "log bad" over
+  nginx's lines).
+  - **Fix:** `logUnitName()` — the open stream's unit, falling back to the
+    selection only before any stream — so the title always names the unit whose
+    lines are on screen. The detail block keeps tracking the selection (it is
+    free to compute and is what the cursor points at).
+- **Seam 2 — a settle restarted journalctl mid-filter-edit (keyboard).** The
+  log-filter editor mutates `m.logFilt.grep` live and defers `syncJournal` to
+  Enter/Esc, but a pending `journalSettleMsg` fired independently and restarted
+  the stream with the half-typed filter.
+  - **Fix:** the settle handler returns early while `m.filterInput &&
+    m.filterLogs`; the editor's close-sync (Enter/Esc) picks up the selection
+    and finished filter together. Not the already-reconciled table-filter case.
+- **Seam 3 — the same editor invariant, but via the mouse (Codex adjacent
+  path).** `tea.MouseMsg` bypasses `handleKey`'s editor branch, so while the log
+  filter was open a table click reached `afterCursorMove` → `syncJournal` with
+  the partial filter (restart), and a right-click opened the action menu over
+  the editor.
+  - **Fix:** `handleMouse` gains a `m.filterInput` guard mirroring the keyboard
+    ownership — the wheel still scrolls the log being read, but clicks, the list
+    wheel and right-click are inert until Enter/Esc. This is general editor
+    ownership: it covers BOTH the table and log filters (unlike the seam-2
+    settle guard, which is log-filter-specific). Reproduced red first.
+- **Seam 1b — retained dead-stream lines mislabelled.** A stream that ends on
+  its own sets `m.journal = nil` but keeps its lines and records
+  `journalDiedUnit`; `logUnitName()` then fell back to the selection, so a wheel
+  scroll after the death re-mislabelled the retained lines (Codex variant).
+  - **Fix:** `logUnitName()` uses `journalDiedUnit` while lines are retained and
+    no stream is live, before falling back to the selection.
+- **Regression coverage:** `src/scroll_settle_test.go` —
+  TestLogTitleNamesTheStreamedUnitDuringSettle (title names the streamed unit,
+  never the unloaded selection, AND the streamed unit's seeded line is rendered
+  beneath that title — not the helper over an empty buffer),
+  TestLogTitleNamesTheDeadUnitWhoseLinesRemain (a real `done` transition retires
+  the stream and retains its line; a following wheel keeps the title on the dead
+  unit and the retained line rendered under it — the live + dead coverage Codex
+  asked for), TestSettleDoesNotRestartJournalWhileEditingLogFilter (clamped
+  WheelUp schedules a settle without moving the unit, type into the log filter,
+  fire the settle → stream unchanged; Enter then applies the filter), and
+  TestFilterEditorOwnsMouseInput (table-driven across BOTH editor modes: left-
+  click, right-click and the list wheel are inert, while the log wheel still
+  scrolls). All fail before their fix.
+- **CHANGELOG:** two Unreleased → Fixed entries, one per commit (log-pane
+  naming with the title fix; filter-editor input ownership with the guard fix).
+- **Gates (explicit exit codes):** gofmt clean; `go vet` 0; full `go test` 0;
+  `go test -race` 0; `nix build` 0.
+- **Review outcome:** Accepted and implemented (triage/review Codex/GPT-5,
+  implementation Claude Code/Opus 4.8, 2026-08-20/21). Codex accepted the
+  production + regression diff across all four variants (seams 1, 1b, 2, 3):
+  the retained dead-stream identity is gated by actual retained lines with the
+  live stream winning; both editor modes have coherent mouse ownership; and the
+  log-wheel exception is proved. Landed as two commits per the maintainer:
+  `202a061509dfdcc3d749e148b892c0d27d00a1d1` "Name the log pane by the unit
+  whose lines are shown" (view.go + the two title regressions + log-pane
+  CHANGELOG), then this commit for filter-editor input ownership (model.go
+  settle + mouse guards, the settle/mouse regressions, filter CHANGELOG, this
+  record).
+
 ## Review process
 
 For each item, replace `_Pending._` with one of:
