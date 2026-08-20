@@ -103,7 +103,7 @@ func fetchOlder(js *journalStream, r runner, unit, cursor string, f logFilter, n
 			return olderBatch{gen: gen}
 		}
 		defer js.pages.Done()
-		ctx, cancel := context.WithTimeout(js.ctx, 30*time.Second)
+		ctx, cancel := context.WithTimeout(js.ctx, backlogTimeout)
 		defer cancel()
 
 		args := append([]string{
@@ -295,8 +295,16 @@ func startJournal(parent context.Context, r runner, unit string, f logFilter, ba
 		// replay beats loss. A probe that cannot run is a visible, retryable
 		// stream failure, and the retirement path recovers it like any other.
 		since := time.Now()
+		// Phase one is bounded: a remote that accepts the session but never
+		// answers must not pin the pane on the spinner forever. Only the
+		// follow tail (phase two) is meant to be unbounded — the probe and
+		// the backlog are a bootstrap. A timeout turns a silent remote into
+		// a terminal, retryable stream death, which the dead-stream recovery
+		// handles like any other. fetchOlder bounds its page the same way.
+		phaseCtx, phaseCancel := context.WithTimeout(ctx, backlogTimeout)
+		defer phaseCancel()
 		if r.host != "" {
-			out, _, err := boundedRun(r.command(ctx, "date", "+%s"))
+			out, _, err := boundedRun(r.command(phaseCtx, "date", "+%s"))
 			if err != nil {
 				meta("remote clock probe: " + err.Error())
 				return
@@ -308,7 +316,7 @@ func startJournal(parent context.Context, r runner, unit string, f logFilter, ba
 			}
 			since = remoteNow
 		}
-		lines, err := readBacklog(ctx, r, unit, f, backlog)
+		lines, err := readBacklog(phaseCtx, r, unit, f, backlog)
 		if err != nil {
 			meta(err.Error())
 			return
@@ -1004,3 +1012,9 @@ func capField(s string, n int) string {
 	}
 	return s[:cut]
 }
+
+// backlogTimeout bounds journal phase one — the remote clock probe and the
+// backlog read — and one backward page. A remote that connects but never
+// answers must not pin the pane on the spinner forever; the follow tail is
+// the only phase that stays unbounded. A var so a test can shrink it.
+var backlogTimeout = 30 * time.Second

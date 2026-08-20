@@ -770,9 +770,9 @@ not silently recycled:
 
 ### P2 — hardening / reliability
 
-#### [ ] UT-035 — Give journal phase-one a deadline
+#### [x] UT-035 — Give journal phase-one a deadline
 
-- **Status:** Pending review
+- **Status:** Accepted — implemented
 - **Confidence:** High — not a leak/deadlock; a user-recoverable stall
 - **Evidence:** `journal.go:297` (remote clock probe) and `:309`
   (`readBacklog`) run on the stream ctx, rooted at `context.Background()`
@@ -790,7 +790,7 @@ not silently recycled:
   retirement/retry without a hot loop, direct-child ESRCH before teardown
   returns; a healthy slow response below the deadline still succeeds and
   follow mode stays long-lived.
-- **Review outcome:** _Pending._
+- **Review outcome:** Accepted and implemented (Claude Code/Fable 5, 2026-08-20; commit "Give the journal bootstrap a deadline"). Phase one — the remote clock probe and the backlog read — now runs under a context.WithTimeout(ctx, backlogTimeout) (30s, shared with fetchOlder's page), so a remote that connects but never answers dies with a visible terminal batch that the UT-012 dead-stream recovery retries, instead of pinning the pane on the spinner forever. Only the follow tail (phase two) stays unbounded. backlogTimeout is a var so tests use a small deadline. Regressions (src/journal_deadline_test.go): TestPhaseOneDeadlineOnASilentRemote (a fake ssh that connects then blocks: a "clock probe" terminal batch within the deadline, direct child ESRCH after stopAndWait), TestPhaseOneDeadlineOnABlockingBacklog (a blocking local journalctl backlog: bounded the same way, child reaped), and TestSlowButHealthyPhaseOneSucceeds (a 100ms response under a 1s deadline: the backlog lands, the seed is delivered, and the follow tail begins and stays alive — the deadline does not leak into phase two).
 
 #### [ ] UT-038 — Harden the release/CI workflows
 

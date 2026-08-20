@@ -10,6 +10,14 @@ to change.
 
 ### Fixed
 
+- **A silent remote no longer freezes the log pane forever.** Opening a
+  unit's journal first probes the remote clock and reads the backlog, both
+  on a connection with no deadline — a host that accepts the session but
+  never answers left the pane spinning "reading the journal…" indefinitely,
+  and because the stream never started or died, nothing recovered it. That
+  bootstrap is time-bounded now; when it expires the stream dies visibly and
+  the usual retry brings it back. The live follow tail stays unbounded, as
+  it should.
 - **A host cannot OOM or freeze the client through the journal.** The live
   log buffer was capped by line count only (up to 22048 entries), each
   allowed 4 MiB — a monitored unit emitting large entries could retain many
