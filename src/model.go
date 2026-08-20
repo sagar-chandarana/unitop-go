@@ -137,6 +137,9 @@ type model struct {
 	// would quietly restore the full recount on every batch that the memo
 	// exists to avoid.
 	logEpoch int
+	// work owns the poll and action children; see progWork. One stable
+	// pointer for the model's lifetime, shared by every Cmd closure.
+	work *progWork
 	// journalDiedAt is when a follow stream ended on its own — journalctl
 	// exited — and was retired; the unit and filter it was following ride
 	// along, because the retry gate may defer ONLY the automatic restart of
@@ -195,6 +198,7 @@ func newModel(r runner, hostLabel string, interval time.Duration, sortBy sortKey
 		filter:    sanitizeText(filter),
 		collapsed: map[string]bool{},
 		totals:    &logTotals{epoch: -1},
+		work:      newProgWork(),
 		logFollow: true,
 		logWrap:   true,
 		showLogs:  true,
@@ -224,9 +228,16 @@ func spinnerTickCmd() tea.Cmd {
 }
 
 func (m model) pollCmd() tea.Cmd {
-	col := m.col
+	col, work := m.col, m.work
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		// Registered here, inside the closure, never at construction: a Cmd
+		// bubbletea drops on the floor must not hold shutdown hostage.
+		root, ok := work.begin()
+		if !ok {
+			return nil // shutdown has begun; launch nothing
+		}
+		defer work.done()
+		ctx, cancel := context.WithTimeout(root, 25*time.Second)
 		defer cancel()
 		us, host, err := col.Poll(ctx)
 		return unitsMsg{units: us, host: host, err: err}
@@ -421,13 +432,22 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// quit is the one way out: every gesture that leaves the program goes
-// through it, so no journalctl — local, or at the far end of an ssh
-// connection — outlives the screen it was feeding.
-func (m *model) quit() (tea.Model, tea.Cmd) {
-	// The waiting variant: by the time the quit is returned, every child is
-	// reaped and the channel closed — nothing outlives the screen.
+// shutdown is the one teardown for BOTH ownership systems: the poll/action
+// owner drains first (cancel, then wait every registered child), then the
+// journal stream winds down. Idempotent — quit and main's post-Run path
+// can both reach it.
+func (m *model) shutdown() {
+	if m.work != nil {
+		m.work.shutdown()
+	}
 	m.journal.stopAndWait()
+}
+
+// quit is the one way out: every gesture that leaves the program goes
+// through it, so no child — journalctl, systemctl, sudo, or the ssh
+// carrying any of them — outlives the screen it was feeding.
+func (m *model) quit() (tea.Model, tea.Cmd) {
+	m.shutdown()
 	return m, tea.Quit
 }
 

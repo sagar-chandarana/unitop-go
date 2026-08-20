@@ -10,6 +10,13 @@ to change.
 
 ### Fixed
 
+- **No poll or action outlives the screen.** Quitting during a slow startup
+  poll or a unit action used to abandon its systemctl, sudo, or ssh child —
+  an action could keep mutating a unit after the UI was gone. Every such
+  child is owned now: a shutdown gate refuses late work, cancels the rest,
+  and waits for it to be reaped — before the quit keypress returns, and
+  again unconditionally after the event loop ends, before the ssh mux is
+  torn down.
 - **A narrow header can no longer hide that polling stopped.** The header's
   right side was dropped whole when it did not fit beside a long hostname or
   filter — and that side carries the only PAUSED or "NOT POLLING — R to

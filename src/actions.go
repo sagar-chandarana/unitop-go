@@ -55,9 +55,14 @@ type toastExpiredMsg struct{ seq int }
 // caller lacks privilege the error is reported in the toast rather than the
 // TUI being taken over by an authentication prompt.
 func (m *model) runAction(unit string, a action) tea.Cmd {
-	r, useSudo := m.r, m.sudo
+	r, useSudo, work := m.r, m.sudo, m.work
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		root, ok := work.begin()
+		if !ok {
+			return nil // shutdown has begun: no action may keep mutating a unit
+		}
+		defer work.done()
+		ctx, cancel := context.WithTimeout(root, 90*time.Second)
 		defer cancel()
 
 		name, args := actionCommand(a, unit, useSudo)

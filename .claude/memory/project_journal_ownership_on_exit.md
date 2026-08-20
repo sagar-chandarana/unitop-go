@@ -27,4 +27,4 @@ Regressions: TestCtrlCQuitsFromEveryState, TestCtrlCKillsTheJournalChild
 `handleKey` returns), TestStreamReplacementReapsTheOldChildren. From TODO
 UT-015 (2026-08 review).
 
-Related: [[sanitize-at-ingress]], [[journalctl-traps]]
+Related: [[sanitize-at-ingress]], [[journalctl-traps]], [[program-work-ownership]]

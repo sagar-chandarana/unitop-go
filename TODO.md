@@ -624,9 +624,9 @@ the cross-UID variant stays deferred; see the review outcome._
 
 Found by adversarial review during implementation of earlier fixes.
 
-#### [ ] UT-031 — Own every poll and action child at exit
+#### [x] UT-031 — Own every poll and action child at exit
 
-- **Status:** Pending review
+- **Status:** Accepted — implemented
 - **Confidence:** High (triaged by Codex/GPT-5, 2026-08-20, during the
   UT-015 ownership audit)
 - **Evidence:** `pollCmd` (25s timeout) and `runAction` (90s) derive their
@@ -644,7 +644,7 @@ Found by adversarial review during implementation of earlier fixes.
 - **Regression coverage:** Local and remote quiet poll and action
   children; a Cmd queued after shutdown is refused and launches nothing;
   exact reaping before shutdown returns; mux-close ordering.
-- **Review outcome:** _Pending._
+- **Review outcome:** Accepted and implemented (triage Codex/GPT-5, implementation Claude Code/Fable 5, 2026-08-20; commit "Own every poll and action child at exit"). progWork is the stable owner pointer newModel creates: root context/cancel, one mutex guarding a closing flag, and a WaitGroup. begin runs INSIDE each Cmd closure immediately before the external work — registering at construction would deadlock shutdown if bubbletea never scheduled the Cmd — and under the mutex either refuses (closing) or Adds before unlocking; shutdown marks closing and cancels before unlocking, then Waits, so Add can never race Wait and a late Cmd launches nothing (returns nil). pollCmd derives its 25s and runAction its 90s timeout from the root. model.shutdown() is the one idempotent teardown for BOTH systems — drain progWork, then stopAndWait the journal — used by quit() before tea.Quit and by the factored runProgram helper (which main calls) unconditionally after p.Run, BEFORE runner.close tears the mux down, so ssh connections drain before their control socket goes away. Journal replacement/page semantics untouched. Regressions (direct exec.Cmd children — `$$` then exec sleep, no nesting): TestQuitReapsThePollChild (local systemctl and fake-ssh remote: ESRCH before the ctrl-c keypress returns), TestShutdownReapsTheActionChild (local and remote: no action keeps mutating after the screen is gone), TestLateCmdIsRefused (constructed before shutdown, invoked after: canary never runs, nil returned), TestBeginShutdownRace (×200 under -race, plus idempotent re-shutdown), TestMuxOutlivesTheDrain (the mux dir survives the drain and only the subsequent close removes it), and TestPostRunShutdownReapsThroughARealProgram — the unconditional post-Run route against a REAL bubbletea Program (no renderer, silent pipe input, no signal handler), externally Killed, holding the factored runProgram helper main uses to reaped-before-return.
 
 ## Review process
 

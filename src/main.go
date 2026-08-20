@@ -11,6 +11,20 @@ import (
 
 var version = "0.3.2"
 
+// runProgram runs the event loop and then unconditionally tears both
+// ownership systems down — whatever route ended the loop: a graceful quit,
+// an external Kill, or an error about to os.Exit (which runs no defers).
+// bubbletea can consume an OS interrupt before Update ever sees it, and
+// both owners are rooted at contexts nothing else cancels. The caller's
+// mux teardown comes after: ssh connections drain before their control
+// socket goes away. Factored so a test can drive a real Program through
+// external termination and hold THIS function to reaped-before-return.
+func runProgram(p *tea.Program, m *model) error {
+	_, err := p.Run()
+	m.shutdown()
+	return err
+}
+
 func main() {
 	var (
 		host     = flag.String("H", "", "monitor a remote host over ssh (e.g. root@server1)")
@@ -57,13 +71,7 @@ func main() {
 	}
 
 	p := tea.NewProgram(&m, tea.WithAltScreen(), tea.WithMouseCellMotion())
-	_, err := p.Run()
-	// Unconditionally, before the error path can os.Exit: bubbletea consumes
-	// an OS interrupt before Update ever sees it, and the journal streams are
-	// rooted at context.Background() — nothing cancels their journalctl (and
-	// the ssh carrying a remote one) but us. Not a defer: its receiver would
-	// be evaluated up here, and os.Exit runs no defers anyway.
-	m.journal.stopAndWait()
+	err := runProgram(p, &m)
 	if err != nil {
 		r.close()
 		fmt.Fprintln(os.Stderr, "unitop:", err)
