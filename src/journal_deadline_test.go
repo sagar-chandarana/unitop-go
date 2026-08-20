@@ -168,3 +168,74 @@ func TestSlowButHealthyPhaseOneSucceeds(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
+
+// The deadline also bounds a backlog that closes stdout but hangs stderr/Wait:
+// runFinite blocks on <-pump.done and cmd.Wait() until the stderr pipe reaches
+// EOF, which a wedged child never delivers. The phase-one deadline kills it.
+func TestPhaseOneDeadlineOnBlockedStderrWait(t *testing.T) {
+	defer func(o time.Duration) { backlogTimeout = o }(backlogTimeout)
+	backlogTimeout = 300 * time.Millisecond
+
+	bin := t.TempDir()
+	pidFile := filepath.Join(bin, "j.pid")
+	// The backlog writes a line, closes stdout (EOF), then blocks with stderr
+	// still open — so the stdout read finishes but Wait/pump.done cannot.
+	writeExe(t, bin, "journalctl", "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = -f ] && exit 0; done\n"+
+		"echo $$ > "+pidFile+"\n"+
+		"printf '{\"__CURSOR\":\"c1\",\"__REALTIME_TIMESTAMP\":\"1723000000000001\",\"MESSAGE\":\"x\"}\\n'\n"+
+		"exec 1>&-\nexec sleep 300\n")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	js := startJournal(context.Background(), runner{}, "u.service", logFilter{}, 50, 1)
+	pid := recordedPid(t, pidFile)
+
+	got := false
+	deadline := time.After(3 * time.Second)
+	for !got {
+		select {
+		case b, ok := <-js.ch:
+			if !ok || b.done {
+				got = true
+			}
+		case <-deadline:
+			t.Fatal("a stderr/Wait-blocked backlog never hit its deadline")
+		}
+	}
+	js.stopAndWait()
+	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Errorf("the stderr-blocked child (pid %d) outlived teardown: %v", pid, err)
+	}
+}
+
+// The terminal batch a timed-out phase one emits is a genuine done batch, so
+// the model's dead-stream recovery (proven exhaustively under UT-012) retires
+// and later retries it — no hot loop. This confirms the handoff between the
+// two: a timeout is retryable, not fatal.
+func TestPhaseOneTimeoutFeedsDeadStreamRecovery(t *testing.T) {
+	defer func(o time.Duration) { backlogTimeout = o }(backlogTimeout)
+	backlogTimeout = 200 * time.Millisecond
+
+	bin := t.TempDir()
+	writeExe(t, bin, "journalctl", "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = -f ] && exit 0; done\nexec sleep 300\n")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	m := pagingModel(0)
+	m.journal.stopAndWait()
+	m.journal = startJournal(context.Background(), runner{}, m.selected, logFilter{}, 50, m.logGen)
+	// Drain to the timeout's terminal batch, feeding the model as the loop does.
+	deadline := time.After(3 * time.Second)
+	for m.journal != nil {
+		select {
+		case b, ok := <-m.journal.ch:
+			if !ok {
+				t.Fatal("channel closed without a done batch")
+			}
+			m.Update(b)
+		case <-deadline:
+			t.Fatal("the timeout never retired the stream")
+		}
+	}
+	if m.journalDiedAt.IsZero() {
+		t.Error("a timed-out stream did not record its death for the retry gate")
+	}
+}

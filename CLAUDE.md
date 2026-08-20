@@ -253,6 +253,70 @@ These are decisions, not accidents. Change them deliberately, not incidentally.
 - `BatchMode=yes` always: unitop must never sit waiting for a password prompt
   behind the alt-screen.
 
+## Security model
+
+unitop watches machines it does not trust. `-H user@host` opens an ssh
+session to an arbitrary host, and *every byte that host returns* —
+`systemctl show` properties, `journalctl` JSON, `/proc` contents, the
+remote poll's framing — is attacker-controlled. A running unit controls its
+own journal messages even locally, so those are never trusted; a unit's
+`Description`, `ExecStart`, `TriggeredBy` and name come from its unit file —
+administrator-controlled on the local host, but whatever the untrusted host
+chooses over `-H`. So the whole data plane is adversarial input, and a
+hostile or compromised host must never be able to crash the operator's TUI,
+move their cursor, or repaint their screen, and must not grow its memory or
+block its session without bound. These invariants keep that true; a full
+review audited them (the `## Security ...` queue in `TODO.md`, UT-032–039,
+against commit `23e1873`). Change them deliberately.
+
+- **Sanitize at ingress, never at render.** Every string that can reach the
+  terminal is run through `sanitizeText`/`sanitizeMessage` where it *enters*
+  — journal fields and properties at parse, `-f`/`-H`/the hostname in
+  `newModel`, key and paste payloads in the editor. The render layer assumes
+  this has already happened; a raw escape that slips through moves the cursor
+  and breaks every width calculation. `escapeLen` consumes *whole* escape
+  sequences (CSI, OSC/DCS/APC with both BEL and ST terminators, charset
+  designators, RIS); C1 8-bit controls and invalid UTF-8 become U+FFFD. See
+  [the sanitize-at-ingress note](.claude/memory/project_sanitize_at_ingress.md).
+- **Bound every retained size, and every command's output.** Journal reads
+  stream through `runFinite` (16 MiB page cap); poll and action commands
+  through `boundedRun` (1 MiB, `maxCmdOutput`) — never `Cmd.Output()`, which
+  buffers an unbounded flood. Each held entry is capped at parse
+  (`maxLineBytes` for the message, `maxFieldBytes` for ident/pid, an oversized
+  cursor dropped), and the live buffer is trimmed by total bytes
+  (`maxLogBytes`) as well as line count. The model log buffer's absolute
+  ceiling is `maxLogBytes` plus at most one backward page (~20 MiB at the
+  current caps, measured), since a page prepend adds bounded history without
+  an immediate trim; the in-flight queues (the parsed-line channel, the
+  batches) are separately bounded by the same per-entry cap. A large entry is
+  capped *before* it is wrapped, so no single line re-wraps the screen every
+  frame. See
+  [the own-the-pipes note](.claude/memory/project_own_pipes_own_everything.md).
+- **Guard every index on untrusted data.** `strings.Fields(x)[0]` on a
+  monitored-host field is a crash waiting for whitespace-only input (a tab
+  the sanitizer expands to spaces); length-check first. This was a real
+  remote-triggered panic (UT-032).
+- **Own every child, and bound the bootstrap.** journalctl, systemctl, sudo,
+  and the ssh carrying them run in goroutines Bubble Tea never waits for; the
+  program owns them so none outlives the screen. Journal phase one (the clock
+  probe and backlog) has a deadline so a silent-but-connected remote cannot
+  pin the pane forever; only the follow tail is unbounded. See
+  [journal-ownership-on-exit](.claude/memory/project_journal_ownership_on_exit.md)
+  and [program-work-ownership](.claude/memory/project_program_work_ownership.md).
+- **ssh transport is least-trust.** The control socket lives in a private
+  0700 directory (never a predictable `/tmp` name); `BatchMode=yes` and no
+  `StrictHostKeyChecking=no` in production, so an unknown host key is a hard
+  failure, not a silent MITM. Locally, arguments are an argv vector.
+  Remotely, `command` `shellQuote`s each one and joins them into the single
+  string ssh hands the login shell —
+  so the quoting, not an argv boundary, is what keeps a hostile unit name,
+  cursor or grep pattern inert; every remote argument goes through it.
+- **The release pipeline is pinned.** Every GitHub Action is a full commit
+  SHA, the release job alone holds write, a dispatched release must name an
+  existing `v*` tag whose commit is what is built (`--verify-tag`), and
+  `src/workflows_test.go` holds these as an ordinary test. `actionlint` and
+  `zizmor` are the linters.
+
 ## Testing
 
 `cd src && go test ./...` is the whole suite — fast, and it needs no host, no
