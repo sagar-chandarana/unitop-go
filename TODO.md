@@ -1051,6 +1051,28 @@ ack → commit loop.
   then required an executed-argv paging proof (fakeFiniteJournalctl) in place of
   a field read — added and red-proven. Landed as one commit + pushed.
 
+#### [ ] UT-044 — Make the too-small notice modal to the mouse
+
+- **Status:** Implemented — held for review
+- **Source:** Codex bounded audit batch 1/2.
+- **Problem:** `handleKey` swallows all input but q/esc below `minWidth`/
+  `minHeight`, but `handleMouse` had no such guard: below the minimum, only the
+  "too small" notice is drawn, yet clicks and the wheel still hit-tested the
+  hidden table/menu/log — a right-click opened an invisible action menu, the
+  wheel scrolled the hidden list.
+- **Fix:** a `m.width < minWidth || m.height < minHeight` guard at the very top
+  of `handleMouse` (before help/menu/filter/table/log), mirroring the keyboard
+  threshold. The `||` covers width-only and height-only too-small states.
+- **Regression coverage:** `src/geometry_input_test.go` —
+  TestTooSmallNoticeSwallowsTheMouse (table-driven over both-dimensions,
+  width-only and height-only; right-click/left-click/wheel over former-content
+  coords all return no command, open no menu, move no selection; red-proven
+  before the guard) and TestTooSmallNoticeSwallowsClicksIntoAnOpenMenu (a menu
+  opened while large is inert to clicks once shrunk — no action, menu unmoved).
+- **Gates (explicit exit codes):** gofmt clean; `go vet` 0; full `go test` 0;
+  `go test -race` 0; `nix build` 0.
+- **Review outcome:** _Pending Codex diff/test inspection._
+
 ## Review process
 
 For each item, replace `_Pending._` with one of:

@@ -27,6 +27,11 @@ to change.
 
 ### Fixed
 
+- **A too-small terminal no longer lets the mouse act on hidden panes.** Below
+  the minimum size only the "too small" notice is drawn, but clicks and the
+  wheel still drove the hidden table, menu and log — a right-click could open an
+  invisible action menu. The notice now owns the mouse just as it already owned
+  the keyboard.
 - **Editing a log filter no longer disturbs the log you're reading.** While you
   typed a search, a poll, a resize, or paging further back could rerun
   `journalctl` with the half-typed text, and the pane title could name a filter

@@ -960,6 +960,13 @@ func (m *model) logKey(k string) tea.Cmd {
 // click on a row select it, a click on a column header sort by it, and a
 // right-click on a unit open the action menu.
 func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// On a terminal too small to draw, the only thing on screen is the notice
+	// saying so; the table, menu and log are not rendered. handleKey already
+	// swallows every key but q/esc here, and the mouse has nothing to act on
+	// either — a click or the wheel would only hit-test hidden panes.
+	if m.width < minWidth || m.height < minHeight {
+		return m, nil
+	}
 	// Help owns the screen: the wheel scrolls it, every click is inert — the
 	// table and log underneath are hidden.
 	if m.help {
