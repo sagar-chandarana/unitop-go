@@ -483,6 +483,23 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Help owns the screen while it is open: it covers both panes, so a key
+	// that is not one of its own must never reach the hidden table, log or
+	// menu underneath — pressing enter, x, or a sort key behind the help
+	// screen used to mutate state nobody could see. Only close, quit, and its
+	// scroll keys act.
+	if m.help {
+		switch msg.String() {
+		case "?", "esc":
+			m.help = false
+		case "q":
+			return m.quit()
+		default:
+			m.helpKey(msg.String()) // scroll keys; helpKey ignores the rest
+		}
+		return m, nil
+	}
+
 	// Before the first successful poll there is nothing to navigate, sort or
 	// act on, so only quitting and retrying mean anything.
 	if !m.connected {
@@ -658,12 +675,6 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// The help covers the panes, so the motion keys move it rather than
-	// whatever is underneath — scrolling a table you cannot see is no use.
-	if m.help {
-		m.helpKey(msg.String())
-		return m, nil
-	}
 	if m.focus == focusLogs {
 		return m, m.logKey(msg.String())
 	}
@@ -912,6 +923,17 @@ func (m *model) logKey(k string) tea.Cmd {
 // click on a row select it, a click on a column header sort by it, and a
 // right-click on a unit open the action menu.
 func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// Help owns the screen: the wheel scrolls it, every click is inert — the
+	// table and log underneath are hidden.
+	if m.help {
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			m.helpScroll = max(0, m.helpScroll-1)
+		case tea.MouseButtonWheelDown:
+			m.helpScroll = min(m.helpScrollMax(), m.helpScroll+1)
+		}
+		return m, nil
+	}
 	if m.menu.open {
 		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
 			if i := m.menuItemAt(msg.X, msg.Y); i >= 0 && !m.menu.confirm {

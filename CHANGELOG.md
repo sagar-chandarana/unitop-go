@@ -10,6 +10,12 @@ to change.
 
 ### Fixed
 
+- **The help screen no longer lets keys and clicks fall through to the
+  hidden panes.** With help open, pressing enter, a sort key, or the action
+  key — or scrolling and clicking with the mouse — used to drive the table,
+  log, and action menu behind the overlay, changing state nobody could see.
+  Help owns the input now: only its own close, quit, and scroll gestures do
+  anything.
 - **The release pipeline is hardened against supply-chain tampering.** Every
   GitHub Action is pinned to a full commit SHA rather than a mutable tag,
   the release job holds write permission alone (the rest of CI is

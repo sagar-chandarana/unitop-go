@@ -815,9 +815,9 @@ not silently recycled:
 
 ### P3 — correctness
 
-#### [ ] UT-039 — The help screen must own its input
+#### [x] UT-039 — The help screen must own its input
 
-- **Status:** Pending review
+- **Status:** Accepted — implemented
 - **Confidence:** High — modal state-corruption, not a security vuln
 - **Evidence:** `handleKey` dispatches the whole command switch before its
   `m.help` branch (model.go:653), and `handleMouse` (model.go:427) has no
@@ -836,7 +836,7 @@ not silently recycled:
   wheel; only documented close/quit/scroll may act; assert no
   poll/action/journal command returned and no hidden state change; cover
   too-short and full-height help at min/wide geometries.
-- **Review outcome:** _Pending._
+- **Review outcome:** Accepted and implemented (Claude Code/Fable 5, 2026-08-20; commit "Let the help screen own its input"). handleKey now checks m.help immediately after the ctrl-c and too-small guards, BEFORE the connected/filter/menu/command dispatch: only ?/esc (close), q (quit, via the shared exit), and the scroll keys act; every other key is swallowed. handleMouse gains a matching guard at its top: the wheel scrolls help (clamped), every click is inert. The late redundant help branch is removed. Regressions (src/help_modal_test.go): TestHelpSwallowsEveryCommandKey (19 command keys × four geometries — min/wide × short/full — each returns no command and a full field snapshot proves no hidden cursor/focus/menu/filter/sort/tree/all/pause/interval/stream change), TestHelpOwnKeysStillAct (?/esc close, q quits with tea.Quit, scroll keys move helpScroll clamped without touching the panes), TestHelpOwnsTheMouse (left/right/header clicks inert, wheel scrolls help clamped both ways).
 
 ## Review process
 
