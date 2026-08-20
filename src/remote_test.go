@@ -74,7 +74,7 @@ func TestDeriveHostOnEmptyDumpIsNotOK(t *testing.T) {
 }
 
 func TestSSHOptsIncludeMultiplexing(t *testing.T) {
-	r := newRunner("root@example")
+	r := testRunner(t, "root@example")
 	joined := strings.Join(r.sshOpts(), " ")
 	for _, want := range []string{"BatchMode=yes", "ControlMaster=auto", "ControlPath=", "ControlPersist="} {
 		if !strings.Contains(joined, want) {

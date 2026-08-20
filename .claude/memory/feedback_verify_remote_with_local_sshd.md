@@ -29,4 +29,9 @@ the poll one-liner, bring the rig up and watch the invocation log
 test now and expensive to get wrong — quoting a journal cursor containing `;`,
 or a `-g` pattern containing a space, both go through this path.
 
+For ssh option questions, the durable order is: read the docs, then resolve
+the EFFECTIVE config with `ssh -G` (it proved command-line `-T` beats a
+user's `RequestTTY=force` — `requesttty false` vs `force` — without
+connecting anywhere), then exercise the local sshd for the behaviour itself.
+
 Related: [[remote-poll]], [[journalctl-traps]]

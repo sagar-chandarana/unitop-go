@@ -77,7 +77,7 @@ func TestInitialFilterFlagIsSanitized(t *testing.T) {
 // ssh transport; every screen renders the sanitized label only.
 func TestHostLabelNeverReachesTheScreenRaw(t *testing.T) {
 	host := "root@evil\x1b[2J.example\x07"
-	mm := newModel(newRunner(host), host, time.Second, sortCPU, false, false, false, "")
+	mm := newModel(testRunner(t, host), host, time.Second, sortCPU, false, false, false, "")
 	m := &mm
 	m.width, m.height, m.ready = 100, 30, true
 
@@ -126,7 +126,7 @@ func TestHostLabelNeverReachesTheScreenRaw(t *testing.T) {
 // troubleshoot keys remote-ness on the transport, not the label.
 func TestAllEscapeHostLabelFallsBackToRemote(t *testing.T) {
 	raw := "\x1b[2J"
-	m := newModel(newRunner(raw), raw, time.Second, sortCPU, false, false, false, "")
+	m := newModel(testRunner(t, raw), raw, time.Second, sortCPU, false, false, false, "")
 	if m.hostLabel != "remote" {
 		t.Errorf("hostLabel = %q, want %q", m.hostLabel, "remote")
 	}

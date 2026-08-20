@@ -109,7 +109,7 @@ func TestFirstLineOf(t *testing.T) {
 // A too-old systemd is a verdict, not a transient failure: polling must stop,
 // and the screen must not claim the host was unreachable.
 func TestUnsupportedIsFatalAndStopsPolling(t *testing.T) {
-	m := newModel(newRunner("root@old"), "old", time.Second, sortCPU, false, false, false, "")
+	m := newModel(testRunner(t, "root@old"), "old", time.Second, sortCPU, false, false, false, "")
 	m.width, m.height, m.ready = 100, 24, true
 
 	m.Update(unitsMsg{err: checkVersion(229, "root@old")})
@@ -148,7 +148,7 @@ func TestUnsupportedIsFatalAndStopsPolling(t *testing.T) {
 
 // An ordinary connection failure must stay retryable.
 func TestOrdinaryFailureKeepsRetrying(t *testing.T) {
-	m := newModel(newRunner("root@x"), "x", time.Second, sortCPU, false, false, false, "")
+	m := newModel(testRunner(t, "root@x"), "x", time.Second, sortCPU, false, false, false, "")
 	m.width, m.height, m.ready = 100, 24, true
 	m.Update(unitsMsg{err: errors.New("ssh: connect to host x port 22: Connection timed out")})
 	if m.fatal {

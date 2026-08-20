@@ -10,6 +10,18 @@ to change.
 
 ### Fixed
 
+- **The ssh control socket lives in a private directory of its own.** It was
+  a predictable /tmp name any local user could squat, and a squatted socket
+  made every real connection hang out its ControlMaster attempt. Each remote
+  session now owns a fresh 0700 directory (removed on exit); if one cannot
+  be made, unitop adds no mux options of its own rather than fall back to a
+  public path.
+- **The remote poll no longer trusts its own transport blindly.** ssh runs
+  with -T, so a RequestTTY=force user config cannot CRLF the framing; the
+  version probe's own failure surfaces as a retryable error with its stderr
+  instead of parsing as a fatal "no systemd" verdict; and the poll's section
+  markers are checked strictly — malformed framing is a retryable error, not
+  a successful-looking zero-unit poll.
 - **A journal stream that dies comes back.** When journalctl exited — a
   transient failure, an ssh blip — the pane kept its final lines but nothing
   ever restarted the tail: the model held the dead stream and mistook it for

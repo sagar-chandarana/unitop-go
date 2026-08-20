@@ -21,18 +21,34 @@ type runner struct {
 	// it each poll pays a full TCP + handshake per command, which on a distant
 	// host costs more than the poll interval.
 	ctlPath string
+	// ctlDir is the private parent that makes the socket safe to share a
+	// machine with: OpenSSH wants ControlPath somewhere others cannot write,
+	// and the old predictable /tmp name let anyone pre-bind it — a squatted
+	// socket made every real connection hang out its ControlMaster attempt.
+	// Owned here, removed by close.
+	ctlDir string
 }
 
 func newRunner(host string) runner {
 	r := runner{host: host}
 	if host != "" {
-		r.ctlPath = filepath.Join(os.TempDir(), fmt.Sprintf(".unitop-%d.sock", os.Getpid()))
+		// MkdirTemp: unique and mode 0700. If it cannot be made, unitop adds
+		// no mux options of its own — slower, and the user's ssh config may
+		// still share safely — but never a predictable public socket.
+		if dir, err := os.MkdirTemp("", "unitop-mux-"); err == nil {
+			r.ctlDir = dir
+			r.ctlPath = filepath.Join(dir, "mux.sock")
+		}
 	}
 	return r
 }
 
 func (r runner) sshOpts() []string {
 	opts := []string{
+		// -T refuses a remote pty even against a RequestTTY=force user
+		// config: a forced tty turns every \n into \r\n and swallows the
+		// command's output framing.
+		"-T",
 		"-o", "BatchMode=yes",
 		"-o", "ConnectTimeout=10",
 		"-o", "ServerAliveInterval=15",
@@ -60,14 +76,18 @@ func (r runner) command(ctx context.Context, name string, args ...string) *exec.
 }
 
 // close tears down the multiplexed connection instead of leaving it to
-// ControlPersist.
+// ControlPersist, then removes the private socket directory it owns — and
+// only that. Idempotent on purpose: main can reach it twice, and RemoveAll
+// of a directory already gone is a no-op.
 func (r runner) close() {
-	if r.ctlPath == "" {
-		return
+	if r.ctlPath != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = exec.CommandContext(ctx, "ssh", "-T", "-o", "ControlPath="+r.ctlPath, "-O", "exit", r.host).Run()
+		cancel()
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	_ = exec.CommandContext(ctx, "ssh", "-o", "ControlPath="+r.ctlPath, "-O", "exit", r.host).Run()
+	if r.ctlDir != "" {
+		_ = os.RemoveAll(r.ctlDir)
+	}
 }
 
 func shellQuote(s string) string {
@@ -347,20 +367,66 @@ func (c *Collector) pollBase(ctx context.Context) (map[string]string, []string, 
 		return proc, parseUnitList(string(out)), nil
 	}
 
-	script := "systemctl --version 2>/dev/null | head -1; echo '" + verMarker + "'; " +
+	// `|| exit` keeps the version command's own failure: piped through the
+	// old `| head -1` its status vanished, later commands succeeded, and an
+	// empty version parsed as a fatal "no systemd" verdict on a host whose
+	// systemctl had merely hiccuped. Its stderr rides the ssh exit error and
+	// the whole thing stays retryable.
+	script := "systemctl --version || exit; echo '" + verMarker + "'; " +
 		"grep -H '' " + strings.Join(procFiles, " ") + " 2>/dev/null; " +
 		"echo '" + procMarker + "'; systemctl " + strings.Join(listUnitsArgs, " ")
 	out, err := c.r.command(ctx, "sh", "-c", script).Output()
 	if err != nil {
 		return nil, nil, fmt.Errorf("remote poll: %w", wrapExec(err))
 	}
-	ver, rest, _ := strings.Cut(string(out), verMarker+"\n")
-	proc, units, _ := strings.Cut(rest, procMarker+"\n")
+	ver, proc, units, perr := parseRemotePoll(string(out))
+	if perr != nil {
+		return nil, nil, fmt.Errorf("remote poll: %w", perr)
+	}
 	c.version = parseSystemdVersion(firstLineOf(ver))
 	if err := checkVersion(c.version, c.r.target()); err != nil {
 		return nil, nil, err
 	}
 	return parseProcDump(proc), parseUnitList(units), nil
+}
+
+// parseRemotePoll splits the remote round trip by its two marker LINES,
+// strictly. CRLF is normalized first — command-line -T deterministically
+// wins over any RequestTTY config (ssh -G proves it), but the remote OUTPUT
+// itself may carry CRLF, and defensive framing costs nothing. A delimiter
+// counts only when a whole line equals the marker: unit descriptions are
+// arbitrary text in the final section, and a description merely CONTAINING
+// a marker token must stay data, not framing. Exactly one of each, in
+// order; anything else is a retryable malformed-poll error — the old
+// lenient Cut ignored its booleans, so torn framing became a
+// successful-looking zero-unit poll, or handed the version parser an empty
+// string that turned into a fatal "no systemd" verdict.
+func parseRemotePoll(out string) (ver, proc, units string, err error) {
+	lines := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
+	vi, pi := -1, -1
+	for i, l := range lines {
+		switch l {
+		case verMarker:
+			if vi >= 0 {
+				return "", "", "", errors.New("malformed poll framing: the version marker line is duplicated")
+			}
+			vi = i
+		case procMarker:
+			if pi >= 0 {
+				return "", "", "", errors.New("malformed poll framing: the proc marker line is duplicated")
+			}
+			pi = i
+		}
+	}
+	if vi < 0 || pi < 0 {
+		return "", "", "", errors.New("malformed poll framing: a marker line is missing")
+	}
+	if pi < vi {
+		return "", "", "", errors.New("malformed poll framing: the marker lines are out of order")
+	}
+	return strings.Join(lines[:vi], "\n"),
+		strings.Join(lines[vi+1:pi], "\n"),
+		strings.Join(lines[pi+1:], "\n"), nil
 }
 
 func firstLineOf(s string) string {

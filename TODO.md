@@ -79,24 +79,27 @@ hardening opportunity.
 
 ### P2 — correctness and reliability
 
-#### [ ] UT-004 — Put the SSH control socket in a private directory
+#### [x] UT-004 — Put the SSH control socket in a private directory
 
-- **Status:** Pending review
-- **Confidence:** Medium; validate with a local multi-user reproduction
+- **Status:** Accepted — implemented
+- **Confidence:** High — the interference half was reproduced during triage
+  (a squatted listener at the predictable path; rc=124); impersonation was
+  never proven and is not claimed
 - **Evidence:** `src/collect.go:26-30` builds the predictable path
   `/tmp/.unitop-<pid>.sock`, and `src/collect.go:40-44` enables opportunistic
   connection sharing. OpenSSH recommends a directory not writable by other
   users for this use.
-- **Impact:** On a multi-user host, another local user may be able to race and
-  pre-bind the predictable mux endpoint, interfering with or impersonating the
-  expected control connection.
+- **Impact:** On a multi-user host, another local user can pre-bind the
+  predictable mux endpoint: a squatted socket makes every real
+  ControlMaster=auto connection hang out its attempt (reproduced: rc=124 at
+  the three-second timeout). Narrowed during triage from the original
+  "interfering with or impersonating" — no protocol impersonation is claimed.
 - **Suggested resolution:** Create a mode-0700 temporary directory and place
   the control socket inside it; clean up the owned directory on exit.
 - **Regression coverage:** Assert that the socket parent is private and unique,
   and attempt a pre-bind from a different UID where CI permits it.
 - **Reference:** [OpenSSH `ControlPath` guidance](https://man.openbsd.org/ssh_config#ControlPath)
-- **Review outcome:** _Pending._ This is unrelated to the previously rejected
-  post-host `ssh host -- command` report; that syntax is valid.
+- **Review outcome:** Accepted and implemented (triage Codex/GPT-5, implementation Claude Code/Fable 5, 2026-08-20; commit "Give the ssh mux a private home and distrust the remote framing"). Impact narrowed during triage to the PROVEN pre-bind interference: a squatted mode-0777 listener at the predictable ControlPath made a real ControlMaster=auto connection hang out its attempt (rc=124 at 3s); no cross-UID impersonation is claimed. Each remote runner now owns a unique MkdirTemp (0700) parent with a fixed socket name inside; if the directory cannot be made, unitop adds no mux options of its own (a user's ssh config may still share safely) rather than falling back to a public path; close() sends ssh -O exit, then removes only the owned directory, and is idempotent — main reaches it twice. Regressions: TestRunnerMuxSocketLivesInAPrivateParent (unique parents, 0700, socket inside), TestRunnerCloseIsIdempotent, TestLocalRunnerCreatesNothing, TestUnusableTempDirOmitsUnitopMuxOptions (a unique missing TMPDIR fixture: no dir, no socket, no ControlMaster/ControlPath options), and every test constructing a remote runner now closes it via the testRunner helper — the full suite leaves zero unitop-mux-* directories behind. This item remains unrelated to the previously rejected post-host `ssh host -- command` report: that syntax is valid, and the local-sshd rig re-confirmed it during this group's end-to-end probe.
 
 #### [x] UT-005 — Handle a decreasing `/proc/stat` iowait counter
 
@@ -328,9 +331,9 @@ hardening opportunity.
   full supported width matrix.
 - **Review outcome:** _Pending._
 
-#### [ ] UT-019 — Disable SSH pseudo-terminal allocation explicitly
+#### [x] UT-019 — Disable SSH pseudo-terminal allocation explicitly
 
-- **Status:** Pending review
+- **Status:** Accepted — implemented
 - **Confidence:** Medium; configuration-dependent
 - **Evidence:** `src/collect.go:34-45` does not pass `-T`. A user SSH setting
   such as `RequestTTY force` can produce CRLF output. Section parsing at
@@ -353,7 +356,7 @@ hardening opportunity.
   streams with LF, CRLF, missing, and duplicated delimiters. Also a remote
   script where the version command fails while later sections succeed: the
   result must be a retryable error, not a fatal version-0 verdict.
-- **Review outcome:** _Pending._
+- **Review outcome:** Accepted and implemented (same split, same commit). Triage proved both halves: `ssh -G -o RequestTTY=force` resolves to `requesttty force` and against the local sshd a forced tty destroyed the command framing, while prepending -T resolved to `requesttty false` and restored it — so every runner invocation now carries -T. The remote poll pipeline preserves the version command's own status (`systemctl --version || exit`, no head, stderr riding the ssh exit error) so a probe failure is a retryable "remote poll" error instead of a fatal version-0 verdict even when later commands would succeed. parseRemotePoll replaces the boolean-ignoring Cuts: CRLF normalized, and a delimiter counts only when a WHOLE line equals the marker — unit descriptions are arbitrary text and may contain marker tokens, which stay data — exactly one of each, in order; anything else is a retryable malformed-poll error, never a successful zero-unit poll. Verified end to end over docs/helpers/local-sshd.sh with a real sshd: 105 units, host stats and a live journal through the private mux with -T. Regressions: TestRemoteArgvShape (incl. the valid host/--/single-command shape and quoting), TestParseRemotePollFraming (LF, CRLF, missing/duplicated/reversed marker lines), TestMarkerTokensInsideDataStayData (marker tokens embedded in and suffixing unit descriptions parse as data; duplicated standalone marker lines still fail), TestRemoteVersionFailureIsRetryable (fake ssh executes the real joined command; version fails with stderr while later commands would succeed → retryable with the message; then a healthy fake polls one unit through the strict framing).
 
 #### [ ] UT-020 — Make all clipping and menu sizing grapheme-aware
 
