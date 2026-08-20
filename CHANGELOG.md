@@ -10,6 +10,12 @@ to change.
 
 ### Fixed
 
+- **The release pipeline is hardened against supply-chain tampering.** Every
+  GitHub Action is pinned to a full commit SHA rather than a mutable tag,
+  the release job holds write permission alone (the rest of CI is
+  read-only), a manually dispatched release must name an existing v* tag
+  whose commit is exactly what is built, the publish verifies that tag, and
+  the release build no longer trusts a shared module cache.
 - **A silent remote no longer freezes the log pane forever.** Opening a
   unit's journal first probes the remote clock and reads the backlog, both
   on a connection with no deadline — a host that accepts the session but

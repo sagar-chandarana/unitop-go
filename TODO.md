@@ -792,9 +792,9 @@ not silently recycled:
   follow mode stays long-lived.
 - **Review outcome:** Accepted and implemented (Claude Code/Fable 5, 2026-08-20; commit "Give the journal bootstrap a deadline"). Phase one — the remote clock probe and the backlog read — now runs under a context.WithTimeout(ctx, backlogTimeout) (30s, shared with fetchOlder's page), so a remote that connects but never answers dies with a visible terminal batch that the UT-012 dead-stream recovery retries, instead of pinning the pane on the spinner forever. Only the follow tail (phase two) stays unbounded. backlogTimeout is a var so tests use a small deadline. Regressions (src/journal_deadline_test.go): TestPhaseOneDeadlineOnASilentRemote (a fake ssh that connects then blocks: a "clock probe" terminal batch within the deadline, direct child ESRCH after stopAndWait), TestPhaseOneDeadlineOnABlockingBacklog (a blocking local journalctl backlog: bounded the same way, child reaped), and TestSlowButHealthyPhaseOneSucceeds (a 100ms response under a 1s deadline: the backlog lands, the seed is delivered, and the follow tail begins and stays alive — the deadline does not leak into phase two).
 
-#### [ ] UT-038 — Harden the release/CI workflows
+#### [x] UT-038 — Harden the release/CI workflows
 
-- **Status:** Pending review
+- **Status:** Accepted — implemented
 - **Confidence:** High — supply-chain / release-integrity hardening
 - **Evidence:** `.github/workflows/release.yml` grants `contents: write`,
   pins actions only by mutable major tags (`actions/checkout@v7`,
@@ -811,7 +811,7 @@ not silently recycled:
   static tests for SHA-pinning, scoped permissions, dispatch-input validation,
   tag-equals-checkout, and `--verify-tag`; annotated and lightweight existing
   tags exercised without publishing.
-- **Review outcome:** _Pending._
+- **Review outcome:** Accepted and implemented (Claude Code/Fable 5, 2026-08-20; commit "Pin and harden the CI and release workflows"). Every workflow `uses:` is pinned to a reviewed full commit SHA (actions/checkout, setup-go, cachix/install-nix-action — resolved via git ls-remote, `# vN` comment kept). release.yml: repo-default permissions dropped to contents: read with contents: write scoped to the release job alone; a Validate step refuses any workflow_dispatch tag that is not v*, that does not exist as refs/tags/, or whose commit is not exactly the checkout; publish uses `gh release create --verify-tag`. Both linters clean: actionlint (fixed an SC2046 unquoted word-split in the gofmt step via `-exec … +`) and zizmor (persist-credentials: false on every checkout — artipacked; cache: false on the contents:write release build — cache-poisoning HIGH). Regression: src/workflows_test.go asserts every uses is a 40-hex SHA, the scoped permissions, the tag guard (v* / refs/tags deref / HEAD compare), --verify-tag, a persist-credentials guard per checkout, and cache:false — skipping when ../.github is absent so the src-only nix build sandbox is unaffected (verified: nix build green). actionlint + zizmor were run manually and both report clean.
 
 ### P3 — correctness
 
