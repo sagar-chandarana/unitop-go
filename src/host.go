@@ -156,8 +156,17 @@ func (c *Collector) deriveHost(files map[string]string, now time.Time) HostStats
 		if dt > 0 {
 			if cur.cpuTotal > p.cpuTotal {
 				dTotal := float64(cur.cpuTotal - p.cpuTotal)
-				dIdle := float64(cur.cpuIdle - p.cpuIdle)
-				h.CPUPct = (dTotal - dIdle) / dTotal * 100
+				// idle includes iowait, which the kernel documents as able to
+				// go backwards. Subtracted as uint64 that wrapped, and one
+				// glitched sample showed an enormous negative percentage. A
+				// sample whose idle ran backwards — or somehow outran the
+				// total — is rejected instead; the baseline below advances
+				// regardless, so the next well-formed sample recovers.
+				if cur.cpuIdle >= p.cpuIdle {
+					if dIdle := float64(cur.cpuIdle - p.cpuIdle); dIdle <= dTotal {
+						h.CPUPct = (dTotal - dIdle) / dTotal * 100
+					}
+				}
 			}
 			h.NetIn = rate(cur.netRx, p.netRx, dt)
 			h.NetOut = rate(cur.netTx, p.netTx, dt)

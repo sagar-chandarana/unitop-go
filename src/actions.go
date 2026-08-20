@@ -59,16 +59,27 @@ func (m *model) runAction(unit string, a action) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 
-		name, args := "systemctl", append(append([]string{}, a.args...), unit)
-		if useSudo {
-			name, args = "sudo", append([]string{"-n", "systemctl"}, args...)
-		}
+		name, args := actionCommand(a, unit, useSudo)
 		out, err := r.command(ctx, name, args...).CombinedOutput()
 		// systemctl's output ends up in the toast; it is the far end's, so it
 		// goes through sanitize like everything else from there.
 		return actionResult{unit: unit, label: a.label, err: err,
 			out: sanitizeText(strings.TrimSpace(string(out)))}
 	}
+}
+
+// actionCommand builds the argv for one context-menu action. The
+// --no-ask-password sits immediately after systemctl and backs the promise
+// above: without it systemctl can summon a polkit password agent on the
+// terminal and take the TUI over. sudo -n stays for the same reason — the
+// sudo path must fail rather than prompt, too. The runner receives this
+// argv unchanged whether it executes locally or over ssh.
+func actionCommand(a action, unit string, useSudo bool) (string, []string) {
+	args := append(append([]string{"--no-ask-password"}, a.args...), unit)
+	if useSudo {
+		return "sudo", append([]string{"-n", "systemctl"}, args...)
+	}
+	return "systemctl", args
 }
 
 func (m *model) applyActionResult(res actionResult) tea.Cmd {

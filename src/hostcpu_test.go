@@ -89,3 +89,55 @@ func TestHostCPUOnAHostWithoutGuests(t *testing.T) {
 		})
 	}
 }
+
+// idle includes iowait, which the kernel documents as able to go backwards.
+// Subtracted as uint64 that wrapped, and one glitched sample reported an
+// enormous negative CPU percentage. Such a sample is rejected — exactly
+// zero, not a plausible-looking clamp — but only its CPU figure: the same
+// sample's network rates come through untouched, and the baseline advances
+// so the next well-formed sample measures correctly. Both guards get a turn:
+// a backwards idle component, and a monotonic idle that outruns the total.
+func TestHostCPUSurvivesBackwardsIowait(t *testing.T) {
+	t0 := time.Now()
+	dev := func(rx, tx uint64) string {
+		return fmt.Sprintf("Inter-|Receive|Transmit\n face |bytes|bytes\n  eth0: %d 0 0 0 0 0 0 0 %d 0 0 0 0 0 0 0\n", rx, tx)
+	}
+	sample := func(c *Collector, stat string, rx, tx uint64, at time.Time) HostStats {
+		return c.deriveHost(map[string]string{
+			"/proc/stat":    stat,
+			"/proc/net/dev": dev(rx, tx),
+			"/proc/meminfo": "MemTotal: 1024 kB\nMemAvailable: 512 kB\n",
+			"/proc/loadavg": "0.00 0.00 0.00 1/1 1",
+			"/proc/uptime":  "100.0 100.0",
+		}, at)
+	}
+
+	c := NewCollector(runner{})
+	sample(c, procStat(0, 0, 0, 100, 50, 0, 0, 0, 0, 0), 1000, 2000, t0)
+
+	// user works 100 ticks while iowait falls from 50 to 20.
+	h := sample(c, procStat(100, 0, 0, 100, 20, 0, 0, 0, 0, 0), 2000, 4000, t0.Add(time.Second))
+	if h.CPUPct != 0 {
+		t.Errorf("backwards-idle sample: CPU%% = %.2f, want exactly 0", h.CPUPct)
+	}
+	if h.NetIn != 1000 || h.NetOut != 2000 {
+		t.Errorf("the rejected CPU figure disturbed the network rates: in=%.0f out=%.0f, want 1000/2000", h.NetIn, h.NetOut)
+	}
+
+	// Against the advanced baseline: 50 busy ticks of 100 total.
+	h = sample(c, procStat(150, 0, 0, 150, 20, 0, 0, 0, 0, 0), 3000, 6000, t0.Add(2*time.Second))
+	if math.Abs(h.CPUPct-50) > 0.01 {
+		t.Errorf("recovery sample: CPU%% = %.2f, want 50", h.CPUPct)
+	}
+
+	// The other guard: idle climbs monotonically but outruns the total,
+	// because the busy components ran backwards instead.
+	h = sample(c, procStat(100, 0, 0, 250, 20, 0, 0, 0, 0, 0), 4000, 8000, t0.Add(3*time.Second))
+	if h.CPUPct != 0 {
+		t.Errorf("idle-outruns-total sample: CPU%% = %.2f, want exactly 0", h.CPUPct)
+	}
+	h = sample(c, procStat(150, 0, 0, 300, 20, 0, 0, 0, 0, 0), 5000, 10000, t0.Add(4*time.Second))
+	if math.Abs(h.CPUPct-50) > 0.01 {
+		t.Errorf("recovery after the second guard: CPU%% = %.2f, want 50", h.CPUPct)
+	}
+}

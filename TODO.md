@@ -96,9 +96,9 @@ hardening opportunity.
 - **Review outcome:** _Pending._ This is unrelated to the previously rejected
   post-host `ssh host -- command` report; that syntax is valid.
 
-#### [ ] UT-005 — Handle a decreasing `/proc/stat` iowait counter
+#### [x] UT-005 — Handle a decreasing `/proc/stat` iowait counter
 
-- **Status:** Pending review
+- **Status:** Accepted — implemented
 - **Confidence:** High
 - **Evidence:** `src/host.go:154-160` subtracts `cur.cpuIdle-p.cpuIdle` as
   `uint64` after checking only that total CPU time increased. `cpuIdle` includes
@@ -110,11 +110,11 @@ hardening opportunity.
 - **Regression coverage:** Use a sample whose total increases while iowait, and
   therefore combined idle, decreases.
 - **Reference:** [Linux `/proc` documentation](https://docs.kernel.org/filesystems/proc.html)
-- **Review outcome:** _Pending._
+- **Review outcome:** Accepted and implemented (triage Codex/GPT-5, implementation Claude Code/Fable 5, 2026-08-20; commit "Never let a glitched sample lie about the host"). A sample whose idle component ran backwards (or outran the total) has its CPU figure rejected rather than wrapped through uint64; the baseline still advances so the next well-formed sample recovers, the same tick's network rates are untouched, and the figure can never leave 0..100. Regression: TestHostCPUSurvivesBackwardsIowait — both guards (backwards idle, and monotonic idle outrunning the total) each rejected to exactly zero with the same tick's network rates asserted exactly, each followed by a sample proving the baseline recovered.
 
-#### [ ] UT-006 — Make systemctl actions genuinely noninteractive
+#### [x] UT-006 — Make systemctl actions genuinely noninteractive
 
-- **Status:** Pending review
+- **Status:** Accepted — implemented
 - **Confidence:** High
 - **Evidence:** `src/actions.go:53-66` promises never to invoke interactive
   polkit, but direct `systemctl` arguments omit `--no-ask-password`.
@@ -125,7 +125,7 @@ hardening opportunity.
 - **Regression coverage:** Assert the exact local, remote, direct, and sudo
   argument lists.
 - **Reference:** [systemctl option defaults in systemd v250](https://github.com/systemd/systemd/blob/v250/src/systemctl/systemctl.c)
-- **Review outcome:** _Pending._
+- **Review outcome:** Accepted and implemented (same split, same commit). actionCommand builds every action's argv with --no-ask-password immediately after systemctl (present since v247, the supported floor), for direct and sudo forms alike — sudo keeps -n — and the runner receives that argv unchanged locally and over ssh (r.command(name, args...) is transport-independent). Regressions: TestActionCommandsNeverPrompt (exact direct and sudo argv including kill --signal option order; flag position and unit-last for every action) and TestActionArgvSurvivesBothTransports (local exec.Cmd.Args verbatim; the remote ssh tail carries the identical order, the tokens being shell-safe).
 
 #### [ ] UT-007 — Stop mixing client and remote wall clocks
 
@@ -242,9 +242,9 @@ hardening opportunity.
   follows indefinitely; verify prompt display and bounded capture.
 - **Review outcome:** _Pending._
 
-#### [ ] UT-014 — Insert one space per space keypress in filters
+#### [x] UT-014 — Insert one space per space keypress in filters
 
-- **Status:** Pending review
+- **Status:** Accepted — implemented
 - **Confidence:** High
 - **Evidence:** `src/model.go:419-423` first appends `msg.Runes`, which already
   contains `' '` for Bubble Tea's `KeySpace`, then appends another literal
@@ -255,7 +255,7 @@ hardening opportunity.
   append when `Runes` already contains the space.
 - **Regression coverage:** Feed a real decoded space event, bracketed paste,
   and synthetic key events to both editors.
-- **Review outcome:** _Pending._
+- **Review outcome:** Accepted and implemented (same split, same commit). KeyRunes and KeySpace are separate cases: a space event inserts exactly one space whether it carries the real " " rune or none (synthetic), and pasted KeyRunes text passes through as one payload. Regression: TestSpaceInsertsExactlyOneSpace (each editor table-tested with a real-shaped KeySpace, a rune-less synthetic one, and a Paste:true KeyRunes payload).
 
 #### [ ] UT-015 — Centralize Ctrl-C quit and child cleanup
 
@@ -601,7 +601,7 @@ the cross-UID variant stays deferred; see the review outcome._
 - **Suggested resolution:** Delete the stale `renderLogWindow` comment and
   correct the `logTotals` comment to describe the `shifted()` contract.
 - **Regression coverage:** None needed; documentation only.
-- **Review outcome:** Accepted (implemented by Claude Code/Fable 5, 2026-08-19; commit "Keep the log window honest about what the buffer holds"). The duplicate renderLogWindow doc is gone and logTotals' comment now describes the shifted() contract. Documentation only; no regression test. Addendum 2026-08-20: two production comments still claimed every batch trims at the cap — the trim site in model.go and the shifted() doc in view.go (which also framed the 34ms/27MB recount as the permanent at-cap frame rather than the periodic trim frame). False under block trimming: the buffer rides to cap+slack and trims every few hundred batches. Both corrected in the UT-029 commit.
+- **Review outcome:** Accepted (implemented by Claude Code/Fable 5, 2026-08-19; commit "Keep the log window honest about what the buffer holds"). The duplicate renderLogWindow doc is gone and logTotals' comment now describes the shifted() contract. Documentation only; no regression test. Addendum 2026-08-20: two production comments still claimed every batch trims at the cap — the trim site in model.go and the shifted() doc in view.go (which also framed the 34ms/27MB recount as the permanent at-cap frame rather than the periodic trim frame). False under block trimming: the buffer rides to cap+slack and trims every few hundred batches. Both corrected in the UT-029 commit. Second addendum: a third copy lived in the Unreleased changelog text itself ("every batch discards the oldest lines") — reworded to block-trimming in the UT-005/006/014 commit.
 
 ## Review process
 

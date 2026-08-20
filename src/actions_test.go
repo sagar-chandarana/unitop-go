@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -335,5 +336,72 @@ func TestFullViewMenuAnchorIsStable(t *testing.T) {
 	_, y2 := m.menuAnchor()
 	if y2 <= y0 {
 		t.Errorf("in the table the popup should follow the row: %d then %d", y0, y2)
+	}
+}
+
+// Authorization must fail rather than prompt: without --no-ask-password,
+// systemctl can summon a polkit password agent on the terminal and seize the
+// TUI. The flag sits immediately after systemctl in every form, the verb and
+// its options stay in order, and the unit comes last. The runner receives
+// this argv unchanged locally and over ssh.
+func TestActionCommandsNeverPrompt(t *testing.T) {
+	var kill action
+	for _, a := range unitActions {
+		if a.label == "kill (SIGKILL)" {
+			kill = a
+		}
+	}
+	name, args := actionCommand(kill, "nginx.service", false)
+	if got := name + " " + strings.Join(args, " "); got !=
+		"systemctl --no-ask-password kill --signal=SIGKILL nginx.service" {
+		t.Errorf("direct: %q", got)
+	}
+	name, args = actionCommand(kill, "nginx.service", true)
+	if got := name + " " + strings.Join(args, " "); got !=
+		"sudo -n systemctl --no-ask-password kill --signal=SIGKILL nginx.service" {
+		t.Errorf("sudo: %q", got)
+	}
+
+	for _, a := range unitActions {
+		for _, sudo := range []bool{false, true} {
+			name, args := actionCommand(a, "u.service", sudo)
+			flat := name + " " + strings.Join(args, " ")
+			if !strings.Contains(flat, "systemctl --no-ask-password "+a.args[0]) {
+				t.Errorf("%s sudo=%v: flag not directly after systemctl: %q", a.label, sudo, flat)
+			}
+			if args[len(args)-1] != "u.service" {
+				t.Errorf("%s sudo=%v: unit not last: %q", a.label, sudo, flat)
+			}
+		}
+	}
+}
+
+// The same argv crosses both transports untouched: locally as exec.Cmd.Args
+// verbatim, remotely as the shell-quoted tail of the ssh command line — the
+// action tokens are all shell-safe, so the tail carries them literally.
+func TestActionArgvSurvivesBothTransports(t *testing.T) {
+	ctx := context.Background()
+	var kill action
+	for _, a := range unitActions {
+		if a.label == "kill (SIGKILL)" {
+			kill = a
+		}
+	}
+
+	name, args := actionCommand(kill, "nginx.service", false)
+	local := runner{}.command(ctx, name, args...)
+	if got := strings.Join(local.Args, " "); got !=
+		"systemctl --no-ask-password kill --signal=SIGKILL nginx.service" {
+		t.Errorf("local argv: %q", got)
+	}
+
+	name, args = actionCommand(kill, "nginx.service", true)
+	remote := runner{host: "root"}.command(ctx, name, args...)
+	if remote.Args[0] != "ssh" {
+		t.Fatalf("remote command is %q, not ssh", remote.Args[0])
+	}
+	tail := remote.Args[len(remote.Args)-1]
+	if tail != "sudo -n systemctl --no-ask-password kill --signal=SIGKILL nginx.service" {
+		t.Errorf("remote tail: %q", tail)
 	}
 }

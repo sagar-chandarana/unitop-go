@@ -11,6 +11,7 @@
 - [inactive/dead means four different things](project_systemd_state_semantics.md) — `ExecMainCode` + `ConditionResult` tell them apart; includes real sampled tuples and the "code=0 while running" trap
 - [Four journalctl behaviours no man page states](project_journalctl_traps.md) — `-g` is not a seek (which is why the log pane is two commands), `-n 0` defeats `--after-cursor`, `-n N` order depends on the filter, `-g` exits 1 on no match
 - [/proc/stat counts guest time twice on purpose](project_proc_stat_guest.md) — the man page is silent, the kernel source is the authority, and only hypervisors show the bug
+- [iowait can run backwards — validate monotonicity, reject the interval, advance the baseline](project_proc_stat_iowait.md) — a backwards uint64 delta is ~1.8e19; the fix pattern and the synthetic regression
 - `systemctl show '*.service'` matches only ~60% of loaded units — the unit list must come from `list-units` first
 - Unit/slice names carry `\xNN` escapes (`my\x2dapp.slice`); parent derivation splits on literal `-`, so escaped names nest correctly by luck as well as by design
 

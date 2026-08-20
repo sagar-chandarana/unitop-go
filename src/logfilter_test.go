@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestLogFilterArgs(t *testing.T) {
@@ -202,5 +204,50 @@ func TestEmptyLogSaysWhy(t *testing.T) {
 	win := stripANSI(strings.Join(m.renderLogWindow(m.logInnerWidth(), m.logHeight()), " "))
 	if !strings.Contains(win, "no entries") || !strings.Contains(win, `matching "boom"`) {
 		t.Errorf("the pane does not show it: %q", win)
+	}
+}
+
+// A real decoded space arrives as KeySpace carrying Runes == " ". Appending
+// the runes and then a literal space put two spaces in per press, so typing
+// "timed out" silently searched for "timed  out" — in the unit filter and in
+// the journal grep alike. Each editor takes a real-shaped KeySpace, a
+// synthetic rune-less one, and a bracketed paste, and each event must land
+// as exactly what it carried.
+func TestSpaceInsertsExactlyOneSpace(t *testing.T) {
+	realSpace := tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
+	synthetic := tea.KeyMsg{Type: tea.KeySpace}
+	paste := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("timed out"), Paste: true}
+
+	editors := []struct {
+		name string
+		logs bool
+		read func(m *model) string
+	}{
+		{"unit filter", false, func(m *model) string { return m.filter }},
+		{"journal grep", true, func(m *model) string { return m.logFilt.grep }},
+	}
+	for _, ed := range editors {
+		mm := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
+		m := &mm
+		m.width, m.height, m.ready = 140, 30, true
+		m.connected = true
+		m.units = testUnits()
+		m.rebuild()
+		if ed.logs {
+			m.focus = focusLogs
+		}
+
+		m.handleKey(keyOf("/"))
+		if m.filterLogs != ed.logs {
+			t.Fatalf("%s: / targeted the wrong editor", ed.name)
+		}
+		m.handleKey(keyOf("a"))
+		m.handleKey(realSpace)
+		m.handleKey(synthetic)
+		m.handleKey(keyOf("b"))
+		m.handleKey(paste)
+		if want := "a  btimed out"; ed.read(m) != want {
+			t.Errorf("%s = %q, want %q (one space per space event, paste verbatim)", ed.name, ed.read(m), want)
+		}
 	}
 }

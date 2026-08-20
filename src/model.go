@@ -423,11 +423,14 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case tea.KeyCtrlU:
 			*text = ""
-		case tea.KeyRunes, tea.KeySpace:
+		case tea.KeyRunes:
 			*text += string(msg.Runes)
-			if msg.Type == tea.KeySpace {
-				*text += " "
-			}
+		case tea.KeySpace:
+			// A real decoded space carries Runes == " "; a synthetic event may
+			// carry none. Appending the runes AND a literal space put two
+			// spaces in per press, silently changing what the filter matches
+			// ("timed out" searched for "timed  out"). Exactly one, either way.
+			*text += " "
 		case tea.KeyCtrlC:
 			return m, tea.Quit
 		default:

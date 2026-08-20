@@ -10,6 +10,18 @@ to change.
 
 ### Fixed
 
+- **A backwards iowait tick can no longer show an absurd CPU percentage.**
+  idle includes iowait, which the kernel lets run backwards; subtracted as an
+  unsigned integer it wrapped, and one glitched sample reported an enormous
+  negative figure. Such a sample's CPU number is dropped — the same tick's
+  network rates survive — and the next well-formed sample recovers.
+- **Unit actions can no longer summon a password prompt on the terminal.**
+  systemctl runs with --no-ask-password in every form, matching the sudo
+  path's existing -n: authorization now fails into the toast, as promised,
+  instead of a polkit agent seizing the screen.
+- **Typing a space into a filter inserts one space, not two.** A real space
+  key carries its rune and was appended twice over, so "timed out" silently
+  searched for "timed  out" — in the unit filter and the journal grep alike.
 - **A deeply scrolled log pane no longer claims the unit has written nothing
   to the journal.** The scroll offset is measured in wrapped display lines, so
   widening the terminal or opening the full view — both of which re-wrap the
@@ -22,7 +34,7 @@ to change.
   unreachable — and a one-entry journal showed only the marker. The scroll
   range gains exactly one step to pay for the row.
 - **A trimmed buffer no longer claims to start at the journal's beginning.**
-  Once the buffer is at its cap every batch discards the oldest lines, but the
+  A full buffer periodically block-trims away its oldest lines, but the
   "beginning of this unit's journal" marker survived the discard, presenting
   incomplete history as complete.
 - **The buffer-full marker states the retention policy** ("unitop keeps the
