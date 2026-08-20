@@ -75,6 +75,12 @@ type tickMsg time.Time
 
 type spinnerTickMsg struct{}
 
+// journalSettleMsg fires journalSettle after a mouse-wheel notch moved the list
+// cursor. Only the one whose gen still equals m.journalSettleGen syncs the
+// journal; the notches before it in a fast scroll are superseded and do
+// nothing. See scrollCursor.
+type journalSettleMsg struct{ gen int }
+
 type unitsMsg struct {
 	units []Unit
 	host  HostStats
@@ -110,6 +116,10 @@ type model struct {
 	cursor   int
 	topRow   int
 	selected string
+	// journalSettleGen debounces the journal fetch while the mouse wheel scrolls
+	// the list: every notch bumps it, and a settle tick only lets the journal
+	// follow the selection once no newer notch has arrived. See scrollCursor.
+	journalSettleGen int
 
 	filter      string
 	filterInput bool
@@ -432,6 +442,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logEpoch++
 		}
 		return m, nil
+
+	case journalSettleMsg:
+		// The wheel has, or has not, moved on since this settle was scheduled.
+		// Only the latest notch's settle still matches the generation; an older
+		// one is stale and must not restart journalctl for a unit already
+		// scrolled past.
+		if msg.gen != m.journalSettleGen {
+			return m, nil
+		}
+		return m, m.syncJournal()
 
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
@@ -956,14 +976,12 @@ func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if overLogs {
 			return m, m.scrollLog(3)
 		}
-		m.cursor -= 3
-		return m, m.afterCursorMove()
+		return m, m.scrollCursor(-3)
 	case tea.MouseButtonWheelDown:
 		if overLogs {
 			return m, m.scrollLog(-3)
 		}
-		m.cursor += 3
-		return m, m.afterCursorMove()
+		return m, m.scrollCursor(3)
 
 	case tea.MouseButtonLeft:
 		if msg.Action != tea.MouseActionPress {
@@ -1079,7 +1097,34 @@ func (m *model) afterCursorMove() tea.Cmd {
 	if r, ok := m.selectedRow(); ok {
 		m.selected = r.key()
 	}
+	m.journalSettleGen++ // a deliberate move cancels any wheel settle still pending
 	return m.syncJournal()
+}
+
+// scrollCursor moves the list cursor by a mouse-wheel notch and lets the
+// journal follow only once the wheel stops. A quick scroll fires many notches a
+// few milliseconds apart; syncing on each would spawn and reap a journalctl
+// child for every unit the pointer flies past — the log pane rushing to fetch
+// on each movement. The selection, and so the highlight, tracks the wheel at
+// once; only the fetch waits journalSettle for the scroll to settle. Every
+// notch supersedes the previous pending settle by bumping journalSettleGen, so
+// exactly one syncJournal runs, for the unit the wheel came to rest on.
+func (m *model) scrollCursor(delta int) tea.Cmd {
+	m.cursor += delta
+	m.clampCursor()
+	if r, ok := m.selectedRow(); ok {
+		m.selected = r.key()
+	}
+	m.journalSettleGen++
+	return settleJournalCmd(m.journalSettleGen)
+}
+
+// journalSettle is how long the wheel must be still before the journal follows
+// the selection. See scrollCursor.
+const journalSettle = 150 * time.Millisecond
+
+func settleJournalCmd(gen int) tea.Cmd {
+	return tea.Tick(journalSettle, func(time.Time) tea.Msg { return journalSettleMsg{gen: gen} })
 }
 
 func stepFor(d time.Duration, dir int) time.Duration {

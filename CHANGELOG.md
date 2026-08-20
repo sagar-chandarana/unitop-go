@@ -24,6 +24,11 @@ to change.
 
 ### Fixed
 
+- **Scrolling the unit list with the mouse wheel no longer makes the log pane
+  thrash.** A quick scroll used to restart `journalctl` on every notch, for
+  each unit the pointer flew past. Now the selection tracks the wheel at once
+  but the log waits for the scroll to settle before it fetches, so only the
+  unit you land on is opened.
 - **The help screen no longer lets keys and clicks fall through to the
   hidden panes.** With help open, pressing enter, a sort key, or the action
   key — or scrolling and clicking with the mouse — used to drive the table,

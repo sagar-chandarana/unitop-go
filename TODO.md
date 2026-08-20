@@ -838,6 +838,57 @@ not silently recycled:
   too-short and full-height help at min/wide geometries.
 - **Review outcome:** Accepted and implemented (Claude Code/Fable 5, 2026-08-20; commit "Let the help screen own its input"). handleKey now checks m.help immediately after the ctrl-c and too-small guards, BEFORE the connected/filter/menu/command dispatch: only ?/esc (close), q (quit, via the shared exit), and the scroll keys act; every other key is swallowed. handleMouse gains a matching guard at its top: the wheel scrolls help (clamped), every click is inert. The late redundant help branch is removed. Regressions (src/help_modal_test.go): TestHelpSwallowsEveryCommandKey (19 command keys × four geometries — min/wide × short/full — each returns no command and a full field snapshot proves no hidden cursor/focus/menu/filter/sort/tree/all/pause/interval/stream change), TestHelpOwnKeysStillAct (?/esc close, q quits with tea.Quit, scroll keys move helpScroll clamped without touching the panes), TestHelpOwnsTheMouse (left/right/header clicks inert, wheel scrolls help clamped both ways).
 
+## Maintainer feature requests
+
+Requested by the maintainer directly (not a review finding), tracked in the
+same ID sequence and worked through the same held-diff → independent-verify →
+ack → commit loop.
+
+#### [x] UT-040 — Let a mouse-wheel scroll settle before the journal follows
+
+- **Status:** Accepted — implemented
+- **Requested by:** maintainer (owner@ipburger.com), 2026-08-20 UTC
+- **Base revision:** `e05fe643decb27d36651cf5f0cb04901205860fa` (current HEAD)
+- **Problem:** Scrolling the unit list with the mouse wheel makes the log pane
+  rush to fetch on every notch. Each wheel notch moved the cursor and called
+  `afterCursorMove → syncJournal`, which tears down the live `journalctl`
+  child (`stopAndWait`) and spawns a new one — so a quick scroll spawns and
+  reaps a process for every unit the pointer flies past.
+- **Resolution:** Debounce the fetch on the wheel path only. A wheel notch now
+  goes through `scrollCursor`, which moves the cursor and updates `m.selected`
+  (so the highlight tracks the wheel immediately) but, instead of syncing,
+  bumps `m.journalSettleGen` and schedules a `journalSettleMsg` after the
+  `journalSettle` const (150 ms). Only the settle whose gen still matches — the
+  last notch, after the wheel goes still — calls `syncJournal`; earlier notches
+  are superseded and do nothing. A deliberate move (`afterCursorMove`: click,
+  keyboard nav) also bumps the gen, cancelling any pending wheel settle, and
+  keeps its immediate sync. Keyboard list navigation is intentionally left
+  immediate (single presses are deliberate; Codex concurred).
+- **Regression coverage:** `src/scroll_settle_test.go` —
+  TestWheelScrollDefersTheJournalFetch (wheel six notches: journal object
+  unchanged mid-scroll while the selection moves; stale-gen settle is a no-op;
+  latest-gen settle switches the stream to the resting unit),
+  TestDeliberateMoveCancelsAPendingWheelSettle (wheel schedules gen N, a
+  keyboard move runs afterCursorMove, switches the journal immediately and
+  bumps the gen, and the old settle N is then inert),
+  TestWheelOverLogDoesNotTouchTheSettle (seed >pane-height log lines, WheelUp
+  over the log pane lifts logScroll off the bottom and stops following, while
+  journalSettleGen and the stream stay unchanged).
+- **CHANGELOG:** entry added under Unreleased → Fixed before the hold.
+- **Gates (explicit exit codes):** gofmt clean (our tree, vendor excluded);
+  `go vet` exit 0; full `go test` exit 0; `go test -race` exit 0; `nix build`
+  exit 0.
+- **Review outcome:** Accepted and implemented (triage/review Codex/GPT-5,
+  implementation Claude Code/Opus 4.8, 2026-08-20). Codex accepted the
+  production design outright (wheel-only debounce; immediate selection;
+  generation invalidation race-free on the model event loop; every direct sync
+  caller intentionally immediate; keyboard nav kept immediate). Two review
+  rounds refined the record only: (1) added the CHANGELOG entry, the
+  gen-cancel and wheel-over-log regressions, and made `journalSettle` a const;
+  (2) fixed TestWheelOverLogDoesNotTouchTheSettle, which began at logScroll==0
+  and sent WheelDown (clamps to zero, proving nothing) — now seeds scrollback
+  and WheelUps so the offset provably moves. Committed the four held paths.
+
 ## Review process
 
 For each item, replace `_Pending._` with one of:
