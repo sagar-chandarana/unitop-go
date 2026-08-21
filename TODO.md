@@ -1,10 +1,10 @@
 # TODO
 
-## Pending review — Codex
+## Completed review — Codex
 
 | Field | Value |
 | --- | --- |
-| Queue status | Pending review |
+| Queue status | Complete — triaged (all outcomes recorded) |
 | Submitted by | OpenAI Codex |
 | Review model | GPT-5 |
 | Submitted | 2026-08-19 UTC |
@@ -12,10 +12,11 @@
 | Scope | Committed contents at the reviewed revision only; working-tree changes were deliberately excluded |
 | Automated checks | `go test ./...`, `go test -race ./...`, `go vet ./...`, and `gofmt -l` passed under `nix develop` |
 
-These are code-review findings awaiting maintainer triage and targeted
-reproduction. They are not accepted bugs or release notes yet. Check an item
-only after recording the review outcome and, when accepted, adding the named
-regression coverage.
+These code-review findings have all been triaged; accepted findings were
+actioned. Each records its review outcome — accepted and implemented (checked),
+duplicate, or rejected — and accepted items carry their named regression
+coverage as applicable; the few explicit deferrals remain recorded as such and
+unchecked. This section is the retained historical record, not a live queue.
 
 Priority guide: **P1** is high-impact or security-sensitive, **P2** is a
 normal correctness/reliability defect, and **P3** is an edge case or
@@ -377,11 +378,11 @@ hardening opportunity.
   exact frame width.
 - **Review outcome:** Accepted and implemented for the narrowed triage scope (same split, same commit): sliceANSI walks grapheme clusters with cell widths — a cut inside a wide cluster skips it whole and pads the overshoot, the boundary style survives onto the tail; tailCells drops whole clusters until the suffix measures within budget (the caret's spare cell is the point); menuWidth counts terminal cells. Other clipping helpers already use grapheme-aware x/ansi and were not claimed or touched. Regressions: TestSliceANSIRespectsGraphemes (CJK straddle+pad, aligned cut, combining marks both sides, ZWJ family, flag AND skin-tone-modified emoji emitting padding never fragments, styled boundary), TestTerminalStraddlePadSurvives (the review-found production edge: a cut inside the line's FINAL wide cluster keeps its load-bearing pad, plain and styled, and a composed overlay row stays exactly the original width), TestOverlayStaysAlignedOverWideText (CJK/emoji under the popup: nothing exceeds the width and every overlaid row is exactly full; the unpadded footer is by design), TestTailCellsKeepsWholeClusters (CJK/ZWJ/skin-tone/combining suffix ≤ budget and a true suffix; caret room), TestNarrowEditorKeepsTheCaret (the original failure end to end: a 40-column View with twenty CJK glyphs in the live filter — caret present, no row over 40 cells), TestMenuWidthCountsCells (CJK title width, the wide title landing EXACTLY on the 40-cell cap, and every drawn line agreeing).
 
-## Pending review — Claude Code
+## Completed review — Claude Code
 
 | Field | Value |
 | --- | --- |
-| Queue status | Pending review |
+| Queue status | Complete — triaged (all outcomes recorded) |
 | Submitted by | Claude Code |
 | Review model | Fable 5 |
 | Submitted | 2026-08-19 UTC |
@@ -389,12 +390,13 @@ hardening opportunity.
 | Scope | The `v0.3.0..v0.3.1` diff (`ffe984d..799cfeb`: the log-pane rework and the screenshot tooling), verified against the full sources at the reviewed revision; the working tree was clean |
 | Automated checks | `go test ./...`, `go vet ./...`, and `gofmt -l` passed under `nix develop` |
 
-These are code-review findings awaiting maintainer triage and targeted
-reproduction. They are not accepted bugs or release notes yet. Every finding
-survived an adversarial verification pass; a Confidence of "High; confirmed"
-means the verifier proved the mechanism from the code, "kept as plausible"
-means it could not be refuted but was not reproduced end to end. IDs continue
-the shared `UT-###` sequence from the queue above.
+These code-review findings have all been triaged; accepted findings were
+actioned, with every review outcome recorded per item. Every finding survived an
+adversarial verification pass; a Confidence of "High; confirmed" means the
+verifier proved the mechanism from the code, "kept as plausible" means it could
+not be refuted but was not reproduced end to end. IDs continue the shared
+`UT-###` sequence from the queue above. Retained historical record, not a live
+queue.
 
 ### P2 — correctness and reliability
 
@@ -620,7 +622,7 @@ the cross-UID variant stays deferred; see the review outcome._
 - **Regression coverage:** None needed; documentation only.
 - **Review outcome:** Accepted (implemented by Claude Code/Fable 5, 2026-08-19; commit "Keep the log window honest about what the buffer holds"). The duplicate renderLogWindow doc is gone and logTotals' comment now describes the shifted() contract. Documentation only; no regression test. Addendum 2026-08-20: two production comments still claimed every batch trims at the cap — the trim site in model.go and the shifted() doc in view.go (which also framed the 34ms/27MB recount as the permanent at-cap frame rather than the periodic trim frame). False under block trimming: the buffer rides to cap+slack and trims every few hundred batches. Both corrected in the UT-029 commit. Second addendum: a third copy lived in the Unreleased changelog text itself ("every batch discards the oldest lines") — reworded to block-trimming in the UT-005/006/014 commit.
 
-## Pending review — joint follow-ups
+## Completed review — joint follow-ups
 
 Found by adversarial review during implementation of earlier fixes.
 
@@ -646,7 +648,7 @@ Found by adversarial review during implementation of earlier fixes.
   exact reaping before shutdown returns; mux-close ordering.
 - **Review outcome:** Accepted and implemented (triage Codex/GPT-5, implementation Claude Code/Fable 5, 2026-08-20; commit "Own every poll and action child at exit"). progWork is the stable owner pointer newModel creates: root context/cancel, one mutex guarding a closing flag, and a WaitGroup. begin runs INSIDE each Cmd closure immediately before the external work — registering at construction would deadlock shutdown if bubbletea never scheduled the Cmd — and under the mutex either refuses (closing) or Adds before unlocking; shutdown marks closing and cancels before unlocking, then Waits, so Add can never race Wait and a late Cmd launches nothing (returns nil). pollCmd derives its 25s and runAction its 90s timeout from the root. model.shutdown() is the one idempotent teardown for BOTH systems — drain progWork, then stopAndWait the journal — used by quit() before tea.Quit and by the factored runProgram helper (which main calls) unconditionally after p.Run, BEFORE runner.close tears the mux down, so ssh connections drain before their control socket goes away. Journal replacement/page semantics untouched. Regressions (direct exec.Cmd children — `$$` then exec sleep, no nesting): TestQuitReapsThePollChild (local systemctl and fake-ssh remote: ESRCH before the ctrl-c keypress returns), TestShutdownReapsTheActionChild (local and remote: no action keeps mutating after the screen is gone), TestLateCmdIsRefused (constructed before shutdown, invoked after: canary never runs, nil returned), TestBeginShutdownRace (×200 under -race, plus idempotent re-shutdown), TestMuxOutlivesTheDrain (the mux dir survives the drain and only the subsequent close removes it), and TestPostRunShutdownReapsThroughARealProgram — the unconditional post-Run route against a REAL bubbletea Program (no renderer, silent pipe input, no signal handler), externally Killed, holding the factored runProgram helper main uses to reaped-before-return.
 
-## Pending review — Security (Claude Code)
+## Completed review — Security (Claude Code)
 
 | Field | Value |
 | --- | --- |
@@ -1208,14 +1210,20 @@ ack → commit loop.
   artifact + host `sleep` churn, both accounted for above. Committed as one
   commit + pushed.
 
-## Review process
+## Record convention
 
-For each item, replace `_Pending._` with one of:
+Each item's **Review outcome** is one of:
 
-- **Accepted** — include owner/target release and link the regression test.
-- **Rejected** — record the reproduction or design evidence that disproves it.
-- **Duplicate** — link the canonical item.
-- **Deferred** — record why and when it should be reconsidered.
+- **Accepted** — implemented; the box is checked and, as applicable, the named
+  regression test is linked (a documentation-only fix has none), with
+  owner/commit recorded in the outcome.
+- **Rejected** — the reproduction or design evidence that disproves it is
+  recorded.
+- **Duplicate** — links the canonical item.
+- **Deferred** — records why and when it should be reconsidered.
 
-When an accepted item ships, remove it from this queue and describe the
-user-visible result under `CHANGELOG.md`'s Unreleased section.
+A checked box means a resolved outcome (accepted/duplicate/…); explicit
+deferrals stay unchecked. A shipped accepted item **stays checked here** — this
+file is the retained historical record of what was reviewed and why, not a live
+queue to prune. Its user-visible result is *also* described under
+`CHANGELOG.md`'s Unreleased section; the two are kept in step, not substitutes.
