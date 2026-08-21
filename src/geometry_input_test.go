@@ -72,6 +72,7 @@ func TestTooSmallNoticeSwallowsTheMouse(t *testing.T) {
 // menu row was cannot run an action or move the menu.
 func TestTooSmallNoticeSwallowsClicksIntoAnOpenMenu(t *testing.T) {
 	m := tooSmallModel(t)
+	stopJournalOnCleanup(t, &m)
 
 	// Open the action menu on the selected unit while the screen is large.
 	rowY := m.headerLines() + 3 + m.cursor

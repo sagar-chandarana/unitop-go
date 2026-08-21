@@ -21,6 +21,7 @@ func startupModel(t *testing.T) model {
 // must not be a single line at the bottom of an empty screen.
 func TestStartupScreenReplacesTheUI(t *testing.T) {
 	m := startupModel(t)
+	stopJournalOnCleanup(t, &m)
 	out := m.View()
 
 	if !strings.Contains(out, "connecting to root@server1") {
@@ -39,6 +40,7 @@ func TestStartupScreenReplacesTheUI(t *testing.T) {
 
 func TestStartupSpinnerAnimatesThenStops(t *testing.T) {
 	m := startupModel(t)
+	stopJournalOnCleanup(t, &m)
 	first := m.View()
 	if _, cmd := m.Update(spinnerTickMsg{}); cmd == nil {
 		t.Error("spinner did not re-arm while connecting")
@@ -58,6 +60,7 @@ func TestStartupSpinnerAnimatesThenStops(t *testing.T) {
 // before the first refresh tick has a chance to launch another one.
 func TestInitMarksInitialPollInFlight(t *testing.T) {
 	m := startupModel(t)
+	stopJournalOnCleanup(t, &m)
 	if m.polling {
 		t.Fatal("test setup unexpectedly has a poll in flight")
 	}
@@ -71,6 +74,7 @@ func TestInitMarksInitialPollInFlight(t *testing.T) {
 
 func TestStartupFailureShowsReasonAndNextSteps(t *testing.T) {
 	m := startupModel(t)
+	stopJournalOnCleanup(t, &m)
 	m.Update(unitsMsg{err: errors.New("remote poll: exit status 255: Permission denied (publickey)")})
 
 	out := m.View()
@@ -103,6 +107,7 @@ func TestStartupFailureShowsReasonAndNextSteps(t *testing.T) {
 // A first poll that succeeds hands the screen over to the real UI.
 func TestStartupClearsOnFirstSuccess(t *testing.T) {
 	m := startupModel(t)
+	stopJournalOnCleanup(t, &m)
 	m.Update(unitsMsg{err: errors.New("boom")})
 	m.Update(unitsMsg{units: testUnits(), host: HostStats{OK: true, NCPU: 8}})
 
@@ -131,6 +136,7 @@ func TestStartupClearsOnFirstSuccess(t *testing.T) {
 // An empty host is a legitimate success, not a reason to sit on the spinner.
 func TestStartupTreatsZeroUnitsAsConnected(t *testing.T) {
 	m := startupModel(t)
+	stopJournalOnCleanup(t, &m)
 	m.Update(unitsMsg{units: nil, host: HostStats{OK: true}})
 	if !m.connected {
 		t.Error("a poll with no units should still count as connected")
@@ -139,6 +145,7 @@ func TestStartupTreatsZeroUnitsAsConnected(t *testing.T) {
 
 func TestStartupKeysAreLimited(t *testing.T) {
 	m := startupModel(t)
+	stopJournalOnCleanup(t, &m)
 	m.Update(unitsMsg{err: errors.New("boom")})
 
 	// Keys that act on the table must not fire while there is no table.

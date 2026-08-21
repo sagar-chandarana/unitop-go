@@ -84,6 +84,7 @@ func TestExpandAcrossSplitStartsTheStream(t *testing.T) {
 		m.width, m.height, m.ready, m.connected = 83, 30, true, true
 		m.units = testUnits()
 		m.rebuild()
+		stopJournalOnCleanup(t, m)
 		switch state {
 		case "paused":
 			m.paused = true
@@ -196,6 +197,7 @@ func TestExpansionBypassesTheRetryGate(t *testing.T) {
 	m.width, m.height, m.ready, m.connected = 83, 30, true, true
 	m.units = testUnits()
 	m.rebuild()
+	stopJournalOnCleanup(t, m)
 	// A fresh same-target death: the gate is closed for automatic retries.
 	m.journalDiedAt = time.Now()
 	m.journalDiedUnit = "nginx.service"

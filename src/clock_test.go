@@ -171,6 +171,7 @@ func TestEmptyBacklogFollowsFromTheRemoteClock(t *testing.T) {
 
 		js := startJournal(context.Background(), runner{host: "root@fake"}, "dummy.service",
 			logFilter{grep: "x"}, 50, 1)
+		defer js.stopAndWait()
 		drainUntilDone(t, js)
 		js.stopAndWait()
 
@@ -206,6 +207,7 @@ func TestCursorHandoffIsUnchanged(t *testing.T) {
 	}
 
 	js := startJournal(context.Background(), runner{host: "root@fake"}, "dummy.service", logFilter{}, 50, 1)
+	defer js.stopAndWait()
 	drainUntilDone(t, js)
 	js.stopAndWait()
 
@@ -233,6 +235,7 @@ func TestLocalStreamIssuesNoClockProbe(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	js := startJournal(context.Background(), runner{}, "dummy.service", logFilter{}, 50, 1)
+	defer js.stopAndWait()
 	drainUntilDone(t, js)
 	js.stopAndWait()
 	if _, err := os.Stat(canary); !errors.Is(err, os.ErrNotExist) {
@@ -252,6 +255,7 @@ func TestBrokenClockProbeFailsVisiblyAndRetryably(t *testing.T) {
 	}
 
 	js := startJournal(context.Background(), runner{host: "root@fake"}, "dummy.service", logFilter{}, 50, 1)
+	defer js.stopAndWait()
 	metas := drainUntilDone(t, js)
 	js.stopAndWait()
 	joined := strings.Join(metas, "\n")
@@ -449,6 +453,7 @@ exit 0
 			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 			js := startJournal(context.Background(), runner{host: "root@fake"}, "dummy.service", filt, 50, 1)
+			defer js.stopAndWait()
 			got := false
 			deadline := time.After(10 * time.Second)
 		wait:
@@ -503,6 +508,7 @@ func TestNonzeroClockProbeAndLocalPoll(t *testing.T) {
 	}
 
 	js := startJournal(context.Background(), runner{host: "root@fake"}, "d.service", logFilter{}, 50, 1)
+	defer js.stopAndWait()
 	metas := drainUntilDone(t, js)
 	js.stopAndWait()
 	if joined := strings.Join(metas, "\n"); !strings.Contains(joined, "remote clock probe") ||
@@ -579,6 +585,7 @@ exec sh -c "$last"
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	js := startJournal(context.Background(), runner{host: "root@fake"}, "d.service", logFilter{}, 50, 1)
+	defer js.stopAndWait()
 	var pid int
 	for i := 0; i < 250 && pid == 0; i++ {
 		if b, err := os.ReadFile(pidFile); err == nil {

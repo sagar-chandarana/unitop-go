@@ -64,7 +64,7 @@ func e2eModel(t *testing.T, dir string, f logFilter) *model {
 	m.rebuild()
 	m.logFilt = f
 	m.journal = startJournal(context.Background(), m.r, "demo.service", f, journalBacklog, m.logGen)
-	t.Cleanup(m.journal.stop)
+	stopJournalOnCleanup(t, &m)
 	return &m
 }
 

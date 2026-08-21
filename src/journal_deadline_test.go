@@ -43,6 +43,7 @@ func TestPhaseOneDeadlineOnASilentRemote(t *testing.T) {
 	// A mux-less runner: no ctlDir, so no 3s ssh -O exit cleanup against the
 	// blocking fake ssh — the phase-one deadline is what this test measures.
 	js := startJournal(context.Background(), runner{host: "root@silent"}, "u.service", logFilter{}, 50, 1)
+	defer js.stopAndWait()
 	pid := recordedPid(t, pidFile)
 
 	start := time.Now()
@@ -94,6 +95,7 @@ func TestPhaseOneDeadlineOnABlockingBacklog(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	js := startJournal(context.Background(), runner{}, "u.service", logFilter{}, 50, 1)
+	defer js.stopAndWait()
 	pid := recordedPid(t, pidFile)
 
 	got := false
@@ -187,6 +189,7 @@ func TestPhaseOneDeadlineOnBlockedStderrWait(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	js := startJournal(context.Background(), runner{}, "u.service", logFilter{}, 50, 1)
+	defer js.stopAndWait()
 	pid := recordedPid(t, pidFile)
 
 	got := false
@@ -220,6 +223,7 @@ func TestPhaseOneTimeoutFeedsDeadStreamRecovery(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	m := pagingModel(0)
+	stopJournalOnCleanup(t, m)
 	m.journal.stopAndWait()
 	m.journal = startJournal(context.Background(), runner{}, m.selected, logFilter{}, 50, m.logGen)
 	// Drain to the timeout's terminal batch, feeding the model as the loop does.

@@ -133,6 +133,7 @@ func TestEveryModeFitsEverySize(t *testing.T) {
 			for _, mode := range modes {
 				m := screenModel(w, h)
 				mode.setup(m)
+				m.journal.stopAndWait() // reap the full-view stream this cell may have opened
 				checkScreen(t, mode.name, m)
 			}
 		}
@@ -231,6 +232,7 @@ func TestTooSmallScreenAlwaysQuits(t *testing.T) {
 			// Open it at a usable size, then shrink the window under it.
 			m := screenModel(100, 30)
 			open.setup(m)
+			stopJournalOnCleanup(t, m)
 			m.Update(tea.WindowSizeMsg{Width: 30, Height: 8})
 
 			if !strings.Contains(stripANSI(m.View()), "too small") {

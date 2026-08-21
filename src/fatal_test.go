@@ -14,6 +14,7 @@ func fatalModel(t *testing.T) *model {
 	m.connected = true
 	m.units = testUnits()
 	m.rebuild()
+	stopJournalOnCleanup(t, &m)
 	return &m
 }
 

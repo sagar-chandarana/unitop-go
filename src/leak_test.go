@@ -27,6 +27,7 @@ func leakModel(t *testing.T) *model {
 		m.logs = append(m.logs, logLine{ts: time.Now(), prio: 3,
 			msg: "pve-firewall.service - Proxmox VE firewall failed to start, and this is long enough to fill the pane"})
 	}
+	stopJournalOnCleanup(t, &m)
 	return &m
 }
 

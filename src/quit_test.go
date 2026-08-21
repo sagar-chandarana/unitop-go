@@ -106,6 +106,7 @@ func TestCtrlCKillsTheJournalChild(t *testing.T) {
 	m.width, m.height, m.ready, m.connected = 140, 30, true, true
 	m.units = testUnits()
 	m.rebuild()
+	stopJournalOnCleanup(t, m)
 	if cmd := m.syncJournal(); cmd == nil {
 		t.Fatal("no journal stream started")
 	}
@@ -215,6 +216,7 @@ func TestStreamReplacementReapsTheOldChildren(t *testing.T) {
 	m.width, m.height, m.ready, m.connected = 140, 30, true, true
 	m.units = testUnits()
 	m.rebuild()
+	stopJournalOnCleanup(t, m)
 	if cmd := m.syncJournal(); cmd == nil {
 		t.Fatal("no journal stream started")
 	}

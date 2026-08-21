@@ -17,6 +17,7 @@ func TestWheelScrollDefersTheJournalFetch(t *testing.T) {
 	m.connected = true
 	m.units = testUnits()
 	m.rebuild()
+	stopJournalOnCleanup(t, &m)
 
 	// Land on a unit and let its stream open, the deliberate way.
 	m.cursor = firstUnitRow(t, &m)
@@ -76,6 +77,7 @@ func TestDeliberateMoveCancelsAPendingWheelSettle(t *testing.T) {
 	m.connected = true
 	m.units = testUnits()
 	m.rebuild()
+	stopJournalOnCleanup(t, &m)
 
 	m.cursor = firstUnitRow(t, &m)
 	if cmd := m.afterCursorMove(); cmd == nil {
@@ -122,6 +124,7 @@ func TestWheelOverLogDoesNotTouchTheSettle(t *testing.T) {
 	m.connected = true
 	m.units = testUnits()
 	m.rebuild()
+	stopJournalOnCleanup(t, &m)
 
 	m.cursor = firstUnitRow(t, &m)
 	m.afterCursorMove()
@@ -167,6 +170,7 @@ func TestLogTitleNamesTheStreamedUnitDuringSettle(t *testing.T) {
 	m.connected = true
 	m.units = testUnits()
 	m.rebuild()
+	stopJournalOnCleanup(t, &m)
 
 	m.cursor = firstUnitRow(t, &m)
 	if cmd := m.afterCursorMove(); cmd == nil {
@@ -223,6 +227,7 @@ func TestLogTitleNamesTheDeadUnitWhoseLinesRemain(t *testing.T) {
 	m.connected = true
 	m.units = testUnits()
 	m.rebuild()
+	stopJournalOnCleanup(t, &m)
 
 	m.cursor = firstUnitRow(t, &m)
 	if cmd := m.afterCursorMove(); cmd == nil {

@@ -17,6 +17,7 @@ func actionModel(t *testing.T) *model {
 	m.connected = true // these fixtures stand in for a model that has already polled
 	m.units = testUnits()
 	m.rebuild()
+	stopJournalOnCleanup(t, &m)
 	return &m
 }
 
@@ -28,6 +29,7 @@ func TestMenuOpensOnUnitsOnly(t *testing.T) {
 	m.connected = true // these fixtures stand in for a model that has already polled
 	m.units = treeUnits()
 	m.rebuild()
+	stopJournalOnCleanup(t, &m)
 
 	m.cursor = 0 // root slice
 	m.afterCursorMove()

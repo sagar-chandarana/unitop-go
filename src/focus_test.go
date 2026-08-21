@@ -16,6 +16,7 @@ func focusModel(t *testing.T) *model {
 	if !m.logPaneVisible() {
 		t.Fatal("the log pane should be visible at this width")
 	}
+	stopJournalOnCleanup(t, &m)
 	return &m
 }
 

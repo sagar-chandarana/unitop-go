@@ -51,6 +51,7 @@ func TestPagingUsesTheStreamFilterNotTheDraft(t *testing.T) {
 	m.connected = true
 	m.units = testUnits()
 	m.rebuild()
+	stopJournalOnCleanup(t, &m)
 
 	const streamFilter, modelFilter = "boom", "crash"
 	m.journal = &journalStream{
@@ -89,6 +90,7 @@ func TestLogFilterDraftNeverLeaksIntoJournalWork(t *testing.T) {
 	m.connected = true
 	m.units = testUnits()
 	m.rebuild()
+	stopJournalOnCleanup(t, &m)
 
 	// Start a stream on applied filter A.
 	m.focus = focusLogs
@@ -196,6 +198,7 @@ func TestSettleDoesNotRestartJournalWhileEditingLogFilter(t *testing.T) {
 	m.connected = true
 	m.units = testUnits()
 	m.rebuild()
+	stopJournalOnCleanup(t, &m)
 
 	m.cursor = firstUnitRow(t, &m)
 	if cmd := m.afterCursorMove(); cmd == nil {
@@ -272,6 +275,7 @@ func TestFilterEditorOwnsMouseInput(t *testing.T) {
 			m.connected = true
 			m.units = testUnits()
 			m.rebuild()
+			stopJournalOnCleanup(t, &m)
 
 			m.cursor = firstUnitRow(t, &m)
 			if cmd := m.afterCursorMove(); cmd == nil {

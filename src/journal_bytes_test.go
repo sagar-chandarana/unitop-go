@@ -125,6 +125,7 @@ func TestModelByteAccountingAndTrim(t *testing.T) {
 
 	// The clear path (a selection change) zeroes the accounting.
 	mc := pagingModel(3)
+	stopJournalOnCleanup(t, mc)
 	mc.logBytes = 999 // stale; the clear must zero it
 	for i, r := range mc.rows {
 		if r.kind == rowUnit && r.unit.Name != mc.journal.unit {

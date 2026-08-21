@@ -132,6 +132,7 @@ func TestTopMarkerReportsPagingState(t *testing.T) {
 // Switching units throws the buffer away, paging state included.
 func TestSelectionChangeResetsPagingState(t *testing.T) {
 	m := pagingModel(50)
+	stopJournalOnCleanup(t, m)
 	m.loadingOlder, m.logAtStart, m.logLoadErr = true, true, "boom"
 	m.selected = ""
 	m.cursor = 1
@@ -220,6 +221,7 @@ func TestBufferIsBounded(t *testing.T) {
 // further up instead of filling it in.
 func TestSwitchingUnitsReturnsToTheLiveEnd(t *testing.T) {
 	m := pagingModel(200)
+	stopJournalOnCleanup(t, m)
 	m.focus = focusLogs
 	for i := 0; i < 500 && !m.atTopOfLog(); i++ {
 		m.logKey("pgup")

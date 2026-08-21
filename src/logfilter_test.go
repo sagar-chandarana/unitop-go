@@ -47,6 +47,7 @@ func TestLogFilterRestartsTheStream(t *testing.T) {
 	m.connected = true
 	m.units = testUnits()
 	m.rebuild()
+	stopJournalOnCleanup(t, &m)
 
 	if cmd := m.syncJournal(); cmd == nil {
 		t.Fatal("no stream started for the selected unit")
@@ -84,6 +85,7 @@ func TestSlashTargetsTheFocusedPane(t *testing.T) {
 	m.connected = true
 	m.units = testUnits()
 	m.rebuild()
+	stopJournalOnCleanup(t, &m)
 
 	m.handleKey(keyOf("/"))
 	if m.filterLogs {

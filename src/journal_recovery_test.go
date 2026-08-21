@@ -21,6 +21,7 @@ func deadStream(t *testing.T) *model {
 	if m.journal != nil {
 		t.Fatal("the dead stream was not retired")
 	}
+	stopJournalOnCleanup(t, m)
 	return m
 }
 
@@ -165,6 +166,7 @@ func TestQueuedPageResultBouncesOffRetirement(t *testing.T) {
 func TestDuplicateTerminalBatchIsInert(t *testing.T) {
 	fakeFollowJournalctl(t)
 	m := pagingModel(3)
+	stopJournalOnCleanup(t, m)
 	deadGen := m.logGen
 
 	m.Update(journalBatch{gen: deadGen, done: true, backlogDone: true})
@@ -200,6 +202,7 @@ func TestDuplicateTerminalBatchIsInert(t *testing.T) {
 func TestGateDoesNotDeferReconciliation(t *testing.T) {
 	fakeFollowJournalctl(t)
 	m := pagingModel(3)
+	stopJournalOnCleanup(t, m)
 	deadUnit := m.journal.unit
 	m.Update(journalBatch{gen: m.logGen, done: true, backlogDone: true})
 	if m.journalDiedAt.IsZero() {
@@ -235,6 +238,7 @@ func TestGateDoesNotDeferReconciliation(t *testing.T) {
 func TestRemovedUnitReconcilesImmediately(t *testing.T) {
 	fakeFollowJournalctl(t)
 	m := pagingModel(3)
+	stopJournalOnCleanup(t, m)
 	dead := m.journal.unit
 	m.Update(journalBatch{gen: m.logGen, done: true, backlogDone: true})
 

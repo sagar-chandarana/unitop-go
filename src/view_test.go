@@ -383,6 +383,7 @@ func TestEnterTogglesFullView(t *testing.T) {
 	m.connected = true // these fixtures stand in for a model that has already polled
 	m.units = testUnits()
 	m.rebuild()
+	stopJournalOnCleanup(t, &m)
 
 	if strings.Contains(m.View(), "UNIT") == false {
 		t.Fatal("the table should be visible to begin with")
@@ -438,6 +439,7 @@ func TestLogToggleIsInertInFullView(t *testing.T) {
 	m.connected = true // these fixtures stand in for a model that has already polled
 	m.units = testUnits()
 	m.rebuild()
+	stopJournalOnCleanup(t, &m)
 	m.activateRow()
 	if !m.fullView {
 		t.Fatal("enter did not open the full view")
@@ -587,6 +589,7 @@ func TestFullViewIgnoresTableKeys(t *testing.T) {
 	m.connected = true
 	m.units = testUnits()
 	m.rebuild()
+	stopJournalOnCleanup(t, &m)
 	m.activateRow()
 	if !m.fullView {
 		t.Fatal("enter did not open the full view")

@@ -1142,6 +1142,72 @@ ack → commit loop.
   CHANGELOG/TODO wording (table titles carry count text, not a unit name).
   Committed as one commit + pushed.
 
+#### [x] UT-045 — Reap follow streams in tests (close the leaked-child hole)
+
+- **Status:** Accepted — implemented
+- **Source:** the CI flake root cause (see 9ca5193) + Codex's exact ownership
+  checklists. Test-only; no production change.
+- **Problem:** `syncJournal` starts follows on `context.Background()`, so a test
+  that opens a stream and returns without `stopAndWait` leaks the goroutine and,
+  where `journalctl` exists (CI, dev hosts), its child process. Demonstrated by
+  the recorded child PID (the fakes record each follow/page pid) surviving the
+  owning test — see the exact-PID proof below; name-based `pgrep` is NOT how
+  this is measured (the fakes `exec sleep 300`, and this host churns unrelated
+  `sleep`s). That leaked child is what shadowed the recorder in the CI flake.
+- **Fix:** a shared `stopJournalOnCleanup(t, *model)` helper
+  (`src/journal_cleanup_test.go`) — `t.Cleanup` that reads `m.journal` at
+  cleanup time (so a replaced stream is still reaped) and calls the idempotent,
+  nil-safe `stopAndWait`. Registered immediately after model setup so it
+  protects assertion-failure returns too. Applied to every stream-opening test
+  per Codex's normal-return + failure-path checklists: added inside the
+  pointer-returning builders (escModel, focusModel, fatalModel, actionModel,
+  leakModel — covers their tests wholesale) and to the named inline/caller tests
+  (startup, geometry, paging replacements, logfilter, view full-view, resize,
+  quit, journal_bytes, filter_ownership, scroll_settle). Fixed
+  `journal_e2e_test.go:e2eModel`, whose `t.Cleanup(m.journal.stop)` was
+  cancel-only and bound the original pointer — now uses the helper. Hot loops
+  (`layout_test.go`) reap synchronously per cell. The direct `js :=
+  startJournal` I/O tests (clock/journal_deadline) and the fake-follow recovery
+  tests (journal_recovery) get an immediate `defer js.stopAndWait()` / dynamic
+  model cleanup right after the stream starts, so an early `Fatal` before their
+  existing late stop still reaps the child; `resize_test.go`'s retry-gate case
+  too. Only genuinely inert synthetic/spy streams are left untouched.
+- **Proof:** a focused regression locks the helper —
+  journal_cleanup_test.go:TestStopJournalOnCleanupReapsTheFollowChild: an owner
+  subtest registers the cleanup while `m.journal` is nil, starts a real
+  fake-follow, records its pid, and returns without stopping it; after `t.Run`
+  returns, the parent asserts that exact pid is reaped via `kill(0)→ESRCH`. This
+  is name-independent, so it holds even though the fake `exec sleep 300`s
+  (renaming the child away from journalctl — which is why a `pgrep journalctl`
+  count is NOT a valid residual check). It locks both late-bound final-pointer
+  ownership and synchronous reaping. stopAndWait's reaping is additionally
+  covered by quit_test.go:TestCtrlCKillsTheJournalChild.
+  - **Whole-suite check (noise-free):** run under `setsid` so the suite has its
+    own session; after it exits, `pgrep -g <pgid>` for `sleep`/`journalctl`/`sh`
+    returns NONE — no fake follow/page child (the fakes `exec sleep 300`)
+    survives. A plain `pgrep -x sleep` before/after count is INVALID on this
+    host: it runs 4–6 unrelated `sleep` processes that churn several per second,
+    so it cannot distinguish an owned leak — the same name-blindness that made
+    `pgrep journalctl` invalid.
+  - **Pre-existing orphan accounted for:** an earlier gate found a `sleep 300`
+    (pid 3932622) reparented to user systemd. It was my own red-check artifact —
+    the run where I deliberately neutered the cleanup (to prove the focused test
+    goes red) left that child unreaped. Killed; not a suite residual.
+  The recorder's `--cursor` narrowing (9ca5193) is kept as belt-and-braces.
+- **Gates (explicit exit codes):** gofmt clean; `go vet` 0; full `go test` 0;
+  `go test -race` 0; `nix build` 0 (helper file git-tracked so the sandbox sees
+  it).
+- **Review outcome:** Accepted and implemented (triage/review Codex/GPT-5,
+  implementation Claude Code/Opus 4.8, 2026-08-21). Test-only; no production
+  change and no CHANGELOG entry. Codex's multi-round ownership audit drove it to
+  full coverage: the normal-return checklist, the early-Fatal direct-stream and
+  recovery families, per-cell layout teardown, the fixed e2eModel replacement
+  cleanup, a compile-order fix, a duplicate-defer removal, and a narrowed helper
+  comment. The exact-PID focused regression plus the isolated-process-group
+  whole-suite evidence close the proof; the residual scare was a red-check
+  artifact + host `sleep` churn, both accounted for above. Committed as one
+  commit + pushed.
+
 ## Review process
 
 For each item, replace `_Pending._` with one of:
