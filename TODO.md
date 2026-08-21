@@ -1051,9 +1051,9 @@ ack → commit loop.
   then required an executed-argv paging proof (fakeFiniteJournalctl) in place of
   a field read — added and red-proven. Landed as one commit + pushed.
 
-#### [ ] UT-044 — Make the too-small notice modal to the mouse
+#### [x] UT-044 — Make the too-small notice modal to the mouse
 
-- **Status:** Implemented — held for review
+- **Status:** Accepted — implemented (landed as two commits; see outcome)
 - **Source:** Codex bounded audit batch 1/2.
 - **Problem:** `handleKey` swallows all input but q/esc below `minWidth`/
   `minHeight`, but `handleMouse` had no such guard: below the minimum, only the
@@ -1071,7 +1071,41 @@ ack → commit loop.
   opened while large is inert to clicks once shrunk — no action, menu unmoved).
 - **Gates (explicit exit codes):** gofmt clean; `go vet` 0; full `go test` 0;
   `go test -race` 0; `nix build` 0.
-- **Review outcome:** _Pending Codex diff/test inspection._
+- **Review outcome:** Accepted and implemented (triage/review Codex/GPT-5,
+  implementation Claude Code/Opus 4.8, 2026-08-21). Codex's immutable audit
+  accepted the net result. Landed as two commits — split by a staging error,
+  not by design: the regression `src/geometry_input_test.go` landed early in
+  `9ca5193` (folded in by a stray already-staged path from a gofmt check), which
+  briefly left HEAD red (test without guard); the guard + CHANGELOG + this
+  record landed in `9c239cd` "Make the too-small notice own the mouse, like the
+  keyboard", restoring green. The accidental red intermediate is recorded here
+  as the disclosed staging error; pushed history is not rewritten.
+
+#### [x] UT-046 — Keep a log row in the full view at short heights
+
+- **Status:** Accepted — implemented
+- **Source:** Codex bounded audit batch 2/4.
+- **Problem:** `detailLines()` is a fixed 7 in full view, but at supported
+  heights 10–13 `paneInner()` is only 5–8; `viewLogPane` emits seven detail
+  rows plus the rule before the logs, and `framed` keeps only the first
+  `paneInner` rows — so the detail block overflows and every log row is clipped.
+  The pane is titled "log" and accepts log controls while showing zero lines.
+- **Fix:** in full view `detailLines()` returns `max(1, min(7, paneInner()-2))`,
+  reserving the rule and at least one log row. No cycle: paneInner →
+  contentHeight → headerLines, none call detailLines.
+- **Regression coverage:** `src/fullview_height_test.go`
+  (TestFullViewKeepsALogRowAtShortHeights): enter full view, seed a sentinel log
+  line, and assert it renders in `View()` at every supported height 10–14.
+  Red-proven (h=10–13 showed no rows before the cap; h=14 already fit).
+- **CHANGELOG:** Unreleased → Fixed entry added.
+- **Gates (explicit exit codes):** gofmt clean; `go vet` 0; full `go test` 0;
+  `go test -race` 0; `nix build` 0.
+- **Review outcome:** Accepted and implemented (triage/review Codex/GPT-5,
+  implementation Claude Code/Opus 4.8, 2026-08-21). Codex accepted the
+  production formula outright; one review round made the regression process-free
+  (set fullView/focus directly instead of starting five real follows) and added
+  a per-height geometry lock (View() is exactly h rows, sentinel below a
+  separator rule). Committed as one commit + pushed.
 
 ## Review process
 

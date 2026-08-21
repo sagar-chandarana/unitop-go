@@ -71,7 +71,10 @@ func (m model) listRows() int {
 // gives ground first on a short terminal.
 func (m model) detailLines() int {
 	if m.fullView {
-		return 7
+		// Cap the detail block so the rule and at least one log row still fit.
+		// A fixed seven overflowed paneInner at heights 10–13, and framed then
+		// clipped every log line, leaving a pane titled "log" with none.
+		return max(1, min(7, m.paneInner()-2))
 	}
 	switch {
 	case m.contentHeight() >= 24:

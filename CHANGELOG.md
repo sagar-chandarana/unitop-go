@@ -27,6 +27,11 @@ to change.
 
 ### Fixed
 
+- **The full-view log pane shows log lines even on a short terminal.** Around
+  heights 10–13 the fixed-size detail block filled the whole pane, so the log —
+  which the pane is titled for and takes scroll and search keys for — showed
+  nothing. The detail block now gives up rows so the separator and at least one
+  log line always fit.
 - **A too-small terminal no longer lets the mouse act on hidden panes.** Below
   the minimum size only the "too small" notice is drawn, but clicks and the
   wheel still drove the hidden table, menu and log — a right-click could open an
