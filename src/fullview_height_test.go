@@ -6,11 +6,12 @@ import (
 	"time"
 )
 
-// Full view fixes the detail block at seven rows, but at short supported heights
-// the pane is only a few rows tall — the detail block plus its rule overflow and
-// framed clips every log row, so the pane is titled "log" and takes log controls
-// while showing zero log lines. At least one log row and the separator must
-// survive at every supported height. Pure rendering: no stream is started.
+// Full view used to fix the detail block at seven rows, but at short supported
+// heights the pane is only a few rows tall — the detail block plus its rule
+// overflowed and framed clipped every log row, so the pane was titled "log" and
+// took log controls while showing zero log lines. At least one log row and the
+// separator must survive at every supported height. Pure rendering: no stream
+// is started.
 func TestFullViewKeepsALogRowAtShortHeights(t *testing.T) {
 	const line = "FULLVIEW-LINE-9"
 	for h := minHeight; h <= 14; h++ {
