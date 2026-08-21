@@ -757,10 +757,26 @@ func (m model) logUnitName() (string, bool) {
 // fitTitle appends the longest of the given descriptions that still fits in the
 // pane's top edge, and the shortest if none of them do.
 func fitTitle(head string, width int, alts ...string) string {
+	budget := width - 4
 	for i, alt := range alts {
-		t := head + stFaint.Render(" · ") + stFilter.Render(alt)
-		if lipgloss.Width(t) <= width-4 || i == len(alts)-1 {
-			return t
+		suffix := stFaint.Render(" · ") + stFilter.Render(alt)
+		if lipgloss.Width(head+suffix) <= budget {
+			return head + suffix
+		}
+		if i == len(alts)-1 {
+			// Last resort: the applied-state indicator must survive, so reserve
+			// its cells and truncate the expendable head — never let the frame
+			// cut the suffix off the right, which would drop the indicator.
+			switch room := budget - lipgloss.Width(suffix); {
+			case room > 0:
+				return truncANSI(head, room) + suffix
+			case room == 0:
+				// The suffix fills the budget exactly: no room for the head.
+				return suffix
+			default:
+				// Too narrow even for the suffix alone: nothing to reserve.
+				return head + suffix
+			}
 		}
 	}
 	return head

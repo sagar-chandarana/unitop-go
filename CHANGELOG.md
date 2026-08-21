@@ -27,6 +27,11 @@ to change.
 
 ### Fixed
 
+- **A narrow pane keeps its filter indicator.** When a title was long — a long
+  unit name in the log pane, or the unit-count text in the table pane — the
+  "· filtered" marker was truncated off the right edge, hiding that a filter was
+  active. The descriptive part of the title is shortened instead, so the marker
+  always shows.
 - **The full-view log pane shows log lines even on a short terminal.** Around
   heights 10–13 the fixed-size detail block filled the whole pane, so the log —
   which the pane is titled for and takes scroll and search keys for — showed

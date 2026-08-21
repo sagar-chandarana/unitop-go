@@ -1107,6 +1107,41 @@ ack → commit loop.
   a per-height geometry lock (View() is exactly h rows, sentinel below a
   separator rule). Committed as one commit + pushed.
 
+#### [x] UT-047 — Keep the filtered-title indicator on a narrow pane
+
+- **Status:** Accepted — implemented
+- **Source:** Codex bounded audit batch 2/5.
+- **Problem:** `framed` admits only `width-4` title cells and truncates from the
+  right. `fitTitle`'s final fallback returned `head + " · filtered"` even when
+  it overran that budget, so a long title — a long unit name in the log pane, or
+  the unit-count head in the table pane — let the frame cut the indicator off
+  the right edge, hiding that a filter was active. Both callers
+  (`fitTitle(..., "filtered")`).
+- **Fix:** on the final `fitTitle` fallback, reserve the styled suffix
+  ` · <alt>` and truncate only the expendable head with the ANSI/grapheme-aware
+  `truncANSI`, then append the suffix; so the indicator always fits within
+  `width-4` and framed never clips it. Boundary: `room > 0` truncates the head;
+  `room == 0` (suffix fills the budget exactly) returns the suffix alone; only a
+  negative room is truly too narrow (unchanged).
+- **Regression coverage:** `src/filtered_title_test.go`
+  (TestFilteredTitleKeepsItsIndicatorWhenNarrow): a long Unicode unit name with
+  an active filter at the 84-col split pane and 40-col full view; asserts
+  "filtered" is visible and every framed row is exactly the terminal width.
+  Red-proven at both geometries (the indicator was cut off before the fix). Plus
+  TestFitTitleReservesTheSuffixAtTheBoundary — a direct helper test at width
+  `suffixWidth+4` (room==0) and +1 (room==1), asserting the result stays within
+  `width-4` and keeps "filtered".
+- **CHANGELOG:** Unreleased → Fixed entry added.
+- **Gates (explicit exit codes):** gofmt clean; `go vet` 0; full `go test` 0;
+  `go test -race` 0; `nix build` 0.
+- **Review outcome:** Accepted and implemented (triage/review Codex/GPT-5,
+  implementation Claude Code/Opus 4.8, 2026-08-21). Codex accepted the
+  reserve/truncate-head design; one review round fixed an exact-fit boundary
+  (`room == 0` returns the suffix alone, not head+suffix, so it never overruns)
+  and added the direct room-0/room-1 boundary regression plus corrected the
+  CHANGELOG/TODO wording (table titles carry count text, not a unit name).
+  Committed as one commit + pushed.
+
 ## Review process
 
 For each item, replace `_Pending._` with one of:
