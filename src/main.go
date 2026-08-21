@@ -9,7 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var version = "0.3.2"
+var version = "0.3.3"
 
 // runProgram runs the event loop and then unconditionally tears both
 // ownership systems down — whatever route ended the loop: a graceful quit,
