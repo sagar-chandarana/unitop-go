@@ -79,4 +79,27 @@ and a 400-unit host is worse. The guard against overlap is the `m.polling` flag,
 which skips a tick while one is in flight — so unitop degrades to "as fast as it
 can" rather than piling up. Do not raise the lower clamp without measuring.
 
+## PID 1 CPU follow-up (2026-08-21)
+
+The wall-time benchmark understated the user-visible problem: on the same
+systemd 257 workstation, a production-shaped query over the 103 loaded service
+units consumed about **140 ms of PID 1 CPU per poll** (and 239 ms wall time),
+while PID 1 used no measurable CPU over an eight-second idle sample. At the old
+one-second default that is roughly 14% of one core in systemd alone.
+
+systemd 257's `systemctl-show.c` explains why reducing `showProperties` did not
+help: `show_one()` calls `bus_map_all_properties()` first, once for every unit;
+only afterwards does `bus_message_print_all_properties()` apply
+`arg_properties`. In other words, `--property=` is an output filter around a
+D-Bus `Properties.GetAll`, not a server-side property selection. The v0.2.0
+addition of eight requested properties was therefore not the 0.1.3→0.3.0 CPU
+cause; old and new property lists measured the same.
+
+The normal view hides inactive units, so it now omits those units from the
+expensive detailed query too; `-a`/`a` includes them and `a` triggers a prompt
+refresh. On this host that changed the steady query from 103 to 62 units and
+about 106 ms of PID 1 CPU. The one-second default is intentionally retained, so
+the estimated PID 1 share falls from ~14% to ~10.6% of one core. Explicit `-i`
+values remain available when lower overhead matters more than one-second data.
+
 Related: [[remote-poll]], [[go-nix-workflow]]

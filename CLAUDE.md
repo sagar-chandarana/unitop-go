@@ -17,8 +17,9 @@ start/stop/restart/kill from a context menu. It works against the local machine
 or, with `-H user@host`, against a remote one over ssh.
 
 Single Go binary, no daemon, no config file, no state on disk. It reads systemd
-through `systemctl`/`journalctl` and the host summary from `/proc`. Built static
-so it can be copied onto any host regardless of libc.
+through `systemctl`/`journalctl` and the host summary from `/proc` plus physical
+disk counters in `/sys/block`. Built static so it can be copied onto any host
+regardless of libc.
 
 Layout follows the convention used by the sibling `*-go` repos: `flake.nix` at
 the root, Go sources in `src/`, dependencies vendored with `vendorHash = null`.
@@ -53,7 +54,7 @@ One bubbletea program. The data flow per tick:
 ```
 tickMsg ──▶ Collector.Poll ──▶ unitsMsg{units, host} ──▶ model.rebuild()
                 │                                              │
-                │ pollBase: unit list + /proc                   │ filter → sort →
+                │ pollBase: unit list + host counters           │ filter → sort →
                 │ systemctl show: all properties, one batch     │ tree grouping
                 ▼                                              ▼
           rates = delta vs previous sample                  []row ──▶ View()
@@ -63,7 +64,8 @@ selection change ──▶ syncJournal ──▶ journalctl -f -o json ──▶
 
 - **Collect** (`collect.go`, `host.go`) — polls, and turns systemd's monotonic
   counters into rates. Owns the previous sample; nothing else does arithmetic on
-  raw counters.
+  raw counters. Host totals come from `/proc/net/dev` and physical leaf devices
+  under `/sys/block`, so partitions and stacked devices are not double-counted.
 - **Interpret** (`state.go`, `sort.go`, `tree.go`) — pure functions over
   `[]Unit`. No I/O, no rendering. This is where "what does inactive/dead
   actually mean" and "what order do rows go in" live.
@@ -239,9 +241,15 @@ These are decisions, not accidents. Change them deliberately, not incidentally.
   numbers and the one thing that would justify switching — `Subscribe()` for
   event-driven state — are in
   `.claude/memory/project_dbus_vs_exec.md`. Read it before "optimising" this.
-- **A poll costs ~265 ms on a 129-unit host**, so the low end of `-i` is already
-  saturated. `m.polling` skips a tick while one is in flight, so it degrades to
-  "as fast as it can" instead of piling up.
+- **`systemctl show --property` still calls `Properties.GetAll` per named unit.**
+  The property list filters the reply client-side; it does not spare PID 1 from
+  computing the other properties. The default UI therefore excludes its hidden
+  inactive units from the detailed query, while `-a`/`a` deliberately includes
+  them. The default remains one second; on the measured host, excluding inactive
+  units cut the detailed set from 103 to 62 and PID 1 CPU from ~140 ms to ~106 ms
+  per poll. The low end of `-i` can still saturate a large host; `m.polling` skips
+  a tick while one is in flight, so it degrades to "as fast as it can" instead
+  of piling up.
 
 **Correctness**
 
@@ -269,7 +277,7 @@ These are decisions, not accidents. Change them deliberately, not incidentally.
 
 unitop watches machines it does not trust. `-H user@host` opens an ssh
 session to an arbitrary host, and *every byte that host returns* —
-`systemctl show` properties, `journalctl` JSON, `/proc` contents, the
+`systemctl show` properties, `journalctl` JSON, `/proc` and `/sys` contents, the
 remote poll's framing — is attacker-controlled. A running unit controls its
 own journal messages even locally, so those are never trusted; a unit's
 `Description`, `ExecStart`, `TriggeredBy` and name come from its unit file —
