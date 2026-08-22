@@ -226,7 +226,8 @@ machine-wide network receive/transmit and physical-disk read/write totals.
 `t` groups units by slice, following the nesting implied by slice names
 (`user-1001.slice` under `user.slice`). Each slice row totals everything
 beneath it — CPU, memory, network, I/O, tasks, restarts — and turns red with
-`N fail` when a descendant has failed.
+`N fail` when a descendant has failed. Selecting a slice shows one combined
+journal for its complete subtree, including nested sub-slices.
 
 ![tree view](docs/tree.png)
 
@@ -246,15 +247,17 @@ removes the menu entirely.
 
 ## Logs
 
-The pane starts with the last 500 entries for the selected unit and follows.
+The pane starts with the last 500 entries for the selected unit or slice and
+follows. A slice uses journald's trusted `_SYSTEMD_SLICE` field to combine its
+known subtree in one stream rather than starting one process per service.
 Scroll to the top and it fetches the previous 500, and keeps going as you keep
 scrolling — so the buffer is a window onto the journal rather than all there is.
 The top line always says which: `loading earlier entries…` while a page is in
-flight, `beginning of this unit's journal` when there is genuinely nothing
+flight, `beginning of this journal` when there is genuinely nothing
 older, and otherwise that more exists and scrolling will load it.
 
 Paging uses journald cursors, so pages join exactly — no duplicated or skipped
-entries. Switching units starts over.
+entries. Switching units or slices starts over.
 
 Log text is sanitised before it is drawn. A journal message is arbitrary bytes,
 and a service can put escape sequences in its own log — left alone they move
@@ -324,7 +327,7 @@ and one batched `systemctl show` for the units visible in the normal view.
 Inactive units join that second query only when `-a` or `a` asks to display
 them. Remotely that is two ssh round trips over a single multiplexed connection.
 Logs are a separate long-lived `journalctl -f -o json`, restarted only when the
-selection changes.
+selected unit or slice subtree changes.
 
 The cost is dominated by systemd itself, not by the process spawn. `systemctl`
 implements `show --property=...` by asking PID 1 for every property of each

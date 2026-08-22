@@ -241,3 +241,45 @@ func TestStreamReplacementReapsTheOldChildren(t *testing.T) {
 
 	m.quit() // leave nothing behind for the next test
 }
+
+// Switching between the two selector kinds must take the same synchronous
+// ownership path as a unit-to-unit or filter replacement: the old slice
+// follow is reaped before the unit stream replaces its only pointer.
+func TestSliceToUnitSwitchReapsTheOldFollow(t *testing.T) {
+	followPid, _ := fakeFollowJournalctl(t)
+
+	mm := newModel(runner{}, "h", time.Second, sortCPU, false, false, true, "")
+	m := &mm
+	m.width, m.height, m.ready, m.connected = 140, 30, true, true
+	m.units = treeUnits()
+	m.rebuild()
+	stopJournalOnCleanup(t, m)
+
+	for i, r := range m.rows {
+		if r.kind == rowSlice && r.slice == "system.slice" {
+			m.cursor = i
+			break
+		}
+	}
+	if cmd := m.syncJournal(); cmd == nil || m.journal == nil {
+		t.Fatal("no journal stream started for the slice")
+	}
+	if !strings.HasPrefix(m.journal.unit, "slice:") {
+		t.Fatalf("slice stream identity = %q", m.journal.unit)
+	}
+	oldFollow := waitPid(t, followPid, "slice follow")
+
+	for i, r := range m.rows {
+		if r.kind == rowUnit {
+			m.cursor = i
+			break
+		}
+	}
+	if cmd := m.syncJournal(); cmd == nil || m.journal == nil {
+		t.Fatal("slice-to-unit switch did not start a replacement")
+	}
+	assertReaped(t, oldFollow, "the replaced slice follow")
+	if strings.HasPrefix(m.journal.unit, "slice:") {
+		t.Fatalf("replacement retained slice identity %q", m.journal.unit)
+	}
+}

@@ -163,6 +163,7 @@ type model struct {
 	// successful poll past the gate may start exactly one replacement.
 	journalDiedAt     time.Time
 	journalDiedUnit   string
+	journalDiedLabel  string
 	journalDiedFilter logFilter
 	totals            *logTotals // memoised wrapped height of the buffer
 	loadingOlder      bool
@@ -419,6 +420,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.journal.stopAndWait()
 			m.journalDiedAt = time.Now()
 			m.journalDiedUnit = m.journal.unit
+			m.journalDiedLabel = m.journal.displayLabel()
 			m.journalDiedFilter = m.journal.filter
 			m.journal = nil
 			m.loadingOlder = false
@@ -948,7 +950,7 @@ func (m *model) loadOlder() tea.Cmd {
 		// Page on the stream's own applied filter, never m.logFilt: while the
 		// log filter is being edited the applied filter is what owns the retained
 		// buffer, and the draft must not fetch a mismatched page.
-		fetchOlder(m.journal, m.r, m.journal.unit, oldest, m.journal.filter, journalBacklog, m.logGen),
+		fetchOlderSelector(m.journal, m.r, m.journal.selector(), oldest, m.journal.filter, journalBacklog, m.logGen),
 		spinnerTickCmd(),
 	)
 }
@@ -1301,23 +1303,60 @@ func (m *model) postPollSync(ok bool) tea.Cmd {
 	return m.syncJournal()
 }
 
-// journalTarget is the unit the pane wants followed right now, "" when none.
+// journalTarget is the stable identity of the journal selector the pane wants,
+// or "" when none. Unit identities remain their unit names for compatibility;
+// slice identities include the known subtree so hierarchy changes restart the
+// stream with the new selector.
 func (m *model) journalTarget() string {
-	if !m.logPaneVisible() {
-		return ""
-	}
-	if r, ok := m.selectedRow(); ok && r.kind == rowUnit {
-		return r.unit.Name
-	}
-	return ""
+	return m.journalSelector().id
 }
 
-// syncJournal makes the log stream follow the selection, restarting journalctl
-// only when the selected unit actually changed. Slice rows have no journal.
+func (m *model) journalSelector() journalSelector {
+	if !m.logPaneVisible() {
+		return journalSelector{}
+	}
+	r, ok := m.selectedRow()
+	if !ok {
+		return journalSelector{}
+	}
+	if r.kind == rowUnit {
+		return unitJournalSelector(r.unit.Name)
+	}
+
+	// A selected slice means its complete known subtree. journald ORs repeated
+	// matches for the same trusted field, so this is still one journalctl
+	// stream. Walk each unit's slice ancestry rather than visible rows: a
+	// collapsed subtree must keep contributing matches.
+	var subtree []string
+	for _, u := range m.units {
+		if !sliceWithin(u.Slice, r.slice) {
+			continue
+		}
+		for cur := u.Slice; cur != ""; cur = sliceParent(cur) {
+			subtree = append(subtree, cur)
+			if cur == r.slice {
+				break
+			}
+		}
+	}
+	return sliceJournalSelector(r.slice, subtree)
+}
+
+func sliceWithin(candidate, ancestor string) bool {
+	for cur := candidate; cur != ""; cur = sliceParent(cur) {
+		if cur == ancestor {
+			return true
+		}
+	}
+	return false
+}
+
+// syncJournal makes the log stream follow the selected unit or slice,
+// restarting journalctl only when its selector actually changed.
 func (m *model) syncJournal() tea.Cmd {
-	want := m.journalTarget()
+	want := m.journalSelector()
 	// A filter change reruns journalctl, because the filtering happens there.
-	if m.journal != nil && m.journal.unit == want && m.journal.filter == m.logFilt {
+	if m.journal != nil && m.journal.unit == want.id && m.journal.filter == m.logFilt {
 		return nil
 	}
 	// The waiting variant here too: this is the only place a stream's last
@@ -1337,10 +1376,10 @@ func (m *model) syncJournal() tea.Cmd {
 	m.loadingOlder, m.logAtStart, m.logLoadErr = false, false, ""
 	m.logGen++
 	m.journalDiedAt = time.Time{} // a deliberate sync settles any debt
-	if want == "" {
+	if want.empty() {
 		return nil
 	}
-	m.journal = startJournal(context.Background(), m.r, want, m.logFilt, journalBacklog, m.logGen)
+	m.journal = startJournalSelector(context.Background(), m.r, want, m.logFilt, journalBacklog, m.logGen)
 	// Restart the spinner: it stops re-arming once connected, and the empty
 	// pane needs it while the first entries are on their way.
 	return tea.Batch(waitJournal(m.journal), spinnerTickCmd())

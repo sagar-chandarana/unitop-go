@@ -738,8 +738,8 @@ func (m model) tableTitle(width int) string {
 	return fitTitle(head, width, "name or description contains "+q, "matching "+q, "filtered")
 }
 
-// logTitle names the unit whose journal is on screen, and what has been left
-// out of it.
+// logTitle names the unit or slice whose journal is on screen, and what has
+// been left out of it.
 func (m model) logTitle(width int) string {
 	head := stColHead.Render("log")
 	if name, ok := m.logUnitName(); ok {
@@ -751,24 +751,28 @@ func (m model) logTitle(width int) string {
 	return fitTitle(head, width, m.logFilt.label(), "filtered")
 }
 
-// logUnitName is the unit whose log lines are actually on screen: the open
-// stream's, so the title names the lines' unit even in the brief window after a
-// wheel scroll moved the selection but before the settle switched the stream.
-// Before any stream — a fresh or slice selection — it falls back to the
-// selection, so a just-selected unit is still named while its first lines are
-// on the way.
+// logUnitName is the source whose log lines are actually on screen: the open
+// stream's, so the title names the lines' unit or slice even in the brief
+// window after a wheel scroll moved the selection but before the settle
+// switched the stream. Before any stream it falls back to the selection.
 func (m model) logUnitName() (string, bool) {
 	if m.journal != nil {
-		return m.journal.unit, true
+		return m.journal.displayLabel(), true
 	}
 	// A stream that ended on its own leaves its lines on screen until recovery;
 	// name them by the unit they came from — recorded when it died — not by a
 	// selection a later wheel scroll may have moved onto.
 	if len(m.logs) > 0 && m.journalDiedUnit != "" {
+		if m.journalDiedLabel != "" {
+			return m.journalDiedLabel, true
+		}
 		return m.journalDiedUnit, true
 	}
-	if u, ok := m.selectedUnit(); ok {
-		return u.Name, true
+	if r, ok := m.selectedRow(); ok {
+		if r.kind == rowSlice {
+			return sliceLabel(r.slice), true
+		}
+		return r.unit.Name, true
 	}
 	return "", false
 }
@@ -1039,13 +1043,8 @@ func cellFor(r row, c colDef, idx int) (string, lipgloss.Style) {
 func (m model) viewLogPane(width, height int) []string {
 	out := make([]string, 0, height)
 	r, haveRow := m.selectedRow()
-	u, ok := m.selectedUnit()
-
-	if !ok {
+	if !haveRow {
 		head := "no unit selected"
-		if haveRow && r.kind == rowSlice {
-			head = sliceLabel(r.slice) + " — a slice has no journal of its own"
-		}
 		out = append(out, stFaint.Render(truncRunes(head, width)))
 		for len(out) < m.detailHeight()-1 {
 			out = append(out, "")
@@ -1053,13 +1052,35 @@ func (m model) viewLogPane(width, height int) []string {
 		return append(out, stBorder.Render(strings.Repeat("─", width)))
 	}
 
-	detail := m.unitDetail(u, width)
+	var detail []string
+	if r.kind == rowSlice {
+		detail = m.sliceDetail(r, width)
+	} else {
+		detail = m.unitDetail(r.unit, width)
+	}
 	for len(detail) < m.detailLines() {
 		detail = append(detail, "")
 	}
 	out = append(out, detail[:m.detailLines()]...)
 	out = append(out, stBorder.Render(strings.Repeat("─", width)))
 	return append(out, m.renderLogWindow(width, m.logHeight())...)
+}
+
+// sliceDetail keeps the aggregate's inexpensive live rates in view while its
+// single subtree journal occupies the normal log area. Cumulative accounting
+// comes from the selected slice's own cgroup (UT-049), not misleading sums of
+// whichever child units happen to be visible.
+func (m model) sliceDetail(r row, width int) []string {
+	head := stHeader.Render(sliceLabel(r.slice))
+	count := fmt.Sprintf("%d units", r.nUnits)
+	if r.nFailed > 0 {
+		count += stFaint.Render(" · ") + stBad.Render(fmt.Sprintf("%d failed", r.nFailed))
+	}
+	return []string{
+		truncANSI(head, width),
+		truncANSI(stFaint.Render(count), width),
+		truncANSI(m.unitLive(r.unit), width),
+	}
 }
 
 // unitDetail describes the selected service, most useful first, so a short
@@ -1357,6 +1378,9 @@ func (m model) emptyLogNotice() []string {
 			stFaint.Render("esc clears it · e changes the level · / searches for something else"),
 		}
 	}
+	if m.journal.target.slice {
+		return []string{stFaint.Render("this slice has no journal entries")}
+	}
 	return []string{stFaint.Render("this unit has written nothing to the journal")}
 }
 
@@ -1379,7 +1403,7 @@ func (m model) logTopMarker(width int) string {
 		return stBad.Render("── could not load earlier entries: ") +
 			lipgloss.NewStyle().Foreground(colRed).Render(truncRunes(m.logLoadErr, max(10, width-40)))
 	case m.logAtStart:
-		return stFaint.Render("── beginning of this unit's journal ──")
+		return stFaint.Render("── beginning of this journal ──")
 	case m.logBufferFull():
 		// The retention policy, not the live count: between trims the buffer
 		// deliberately rides up to the slack past a cap, so any exact number

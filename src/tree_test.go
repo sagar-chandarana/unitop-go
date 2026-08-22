@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -159,18 +160,44 @@ func TestTreeCursorAndCollapseKeys(t *testing.T) {
 	}
 }
 
-func TestSelectedUnitIgnoresSliceRows(t *testing.T) {
+func TestSelectedSliceBuildsASubtreeJournalSelector(t *testing.T) {
 	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, true, "")
 	m.width, m.height, m.ready = 140, 30, true
 	m.connected = true // these fixtures stand in for a model that has already polled
 	m.units = treeUnits()
 	m.rebuild()
-	m.cursor = 0 // the root slice
+	found := false
+	for i, r := range m.rows {
+		if r.kind == rowSlice && r.slice == "user.slice" {
+			m.cursor = i
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("user.slice row was not built")
+	}
 	if _, ok := m.selectedUnit(); ok {
 		t.Error("a slice row must not be reported as a unit")
 	}
-	// And no journal should be started for it.
-	if cmd := m.syncJournal(); cmd != nil {
-		t.Error("syncJournal started a stream for a slice row")
+	selector := m.journalSelector()
+	for _, want := range []string{"_SYSTEMD_SLICE=user.slice", "_SYSTEMD_SLICE=user-1000.slice"} {
+		if !slices.Contains(selector.args, want) {
+			t.Errorf("user subtree omitted %q: %v", want, selector.args)
+		}
+	}
+	if slices.Contains(selector.args, "_SYSTEMD_SLICE=system.slice") {
+		t.Errorf("user subtree leaked system.slice: %v", selector.args)
+	}
+	if got := stripANSI(m.logTitle(80)); !strings.Contains(got, "log user") {
+		t.Errorf("slice log title = %q", got)
+	}
+
+	m.journal = &journalStream{unit: selector.id, target: selector, gen: m.logGen}
+	m.logBacklogDone = true
+	got := stripANSI(strings.Join(m.viewLogPane(m.logPaneWidth(), m.contentHeight()), "\n"))
+	if !strings.Contains(got, "this slice has no journal entries") ||
+		strings.Contains(got, "this unit") || strings.Contains(got, "no journal for this row") {
+		t.Errorf("empty slice journal was not rendered as an empty stream:\n%s", got)
 	}
 }

@@ -8,6 +8,13 @@ to change.
 
 ## [Unreleased]
 
+### Added
+
+- **Slice rows show their complete subtree's journal.** Selecting a slice in
+  tree view reads its own and its known descendant slices through journald's
+  trusted `_SYSTEMD_SLICE` matches in one stream. Backwards paging, live follow,
+  priority levels, and journal search work the same way as for a service.
+
 ## [0.3.4] — 2026-08-22
 
 ### Added

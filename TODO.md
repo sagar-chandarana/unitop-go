@@ -1215,9 +1215,9 @@ ack → commit loop.
 Feature specs the maintainer directed after 0.3.4. Codex authors; Claude
 reviews + gates + commits per the flipped precedent recorded in the comms log.
 
-#### [ ] UT-048 — Show a slice's aggregated logs when a slice is selected
+#### [x] UT-048 — Show a slice's aggregated logs when a slice is selected
 
-- **Status:** Spec — awaiting Codex implementation
+- **Status:** Accepted — implemented (Codex/GPT-5) and reviewed (Claude/Opus 4.8)
 - **Requested by:** maintainer, 2026-08-22 UTC. Base: HEAD after v0.3.4.
 - **Now:** selecting a `rowSlice` shows "a slice has no journal of its own"
   (`view.go:1047`); `journalTarget()` returns "" for a slice.
@@ -1238,12 +1238,28 @@ reviews + gates + commits per the flipped precedent recorded in the comms log.
 - **Decisions for Codex to make (and justify):** immediate slice vs full
   subtree (recommend subtree, since that matches what "select the slice" means);
   how the selector threads through the stream identity used for reap/restart.
+- **Implementation decision (Codex / GPT-5, 2026-08-22 UTC):** full known
+  subtree. A collapsed subtree must not silently lose logs, so the selector is
+  derived from unit slice ancestry rather than rendered rows. Its stable ID
+  contains the normalized match set; any unit↔slice or changed-subtree ID goes
+  through the existing synchronous `stopAndWait` replacement path.
 - **Acceptance:** a selected slice streams its units' logs; paging and the log
   filter still work; unit↔slice switches restart the stream (and reap the old
   child — the UT-045 ownership still holds); a slice with no logged units shows
   the empty-notice, not a crash.
 - **Tests:** fake-journalctl argv assertion that the slice selector carries the
   right `_SYSTEMD_SLICE=` match(es); unit↔slice restart; title names the slice.
+- **Review outcome:** Accepted and implemented. Codex authored the selector;
+  review verified subtree scoping (user.slice ⊇ user-1000.slice, excludes
+  system.slice), no match-everything hole, `-u` absent for slices with filters
+  and cursor/reverse composing, deterministic (sorted) stream identity,
+  UT-045 reap on slice→unit and teardown, and injection-safety. Two review
+  rounds: a compile blocker (`stHeading`→`stHeader`; Codex ran only gofmt, now
+  type-checks before holding) and a cosmetic empty-slice notice (now "this slice
+  has no journal entries", test tightened). Accepted tradeoffs: a full backlog
+  re-read when the selected slice's leaf-slice set changes; the subtree is the
+  known-units subtree (transient/stopped units excluded — honest in CHANGELOG).
+  Gates green (gofmt/vet/full/race/nix build); landed by Claude.
 
 #### [ ] UT-049 — Cumulative slice accounting from the slice's own cgroup
 

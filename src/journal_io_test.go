@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -29,6 +30,48 @@ func fakeFiniteJournalctl(t *testing.T, script string) (argv func() string) {
 
 func pageStream() *journalStream {
 	return &journalStream{ctx: context.Background(), done: nil}
+}
+
+func TestSliceJournalSelectorReachesBacklogAndPagingArgv(t *testing.T) {
+	argv := fakeFiniteJournalctl(t, "exit 0\n")
+	selector := sliceJournalSelector("system.slice", []string{
+		"system.slice", "system-app.slice", "system-app-worker.slice",
+	})
+
+	if _, err := readBacklogSelector(context.Background(), runner{}, selector,
+		logFilter{grep: "needle", prio: 4}, 25); err != nil {
+		t.Fatalf("slice backlog failed: %v", err)
+	}
+	wantMatches := []string{
+		"_SYSTEMD_SLICE=system.slice",
+		"_SYSTEMD_SLICE=system-app.slice",
+		"_SYSTEMD_SLICE=system-app-worker.slice",
+	}
+	assertSliceJournalArgv(t, argv(), wantMatches, "-n", "25", "-g", "needle", "-p", "4")
+
+	msg := fetchOlderSelector(pageStream(), runner{}, selector, "anchor", logFilter{}, 10, 7)()
+	if got := msg.(olderBatch); got.gen != 7 || got.err != "" {
+		t.Fatalf("slice page result = %+v", got)
+	}
+	assertSliceJournalArgv(t, argv(), wantMatches, "--cursor", "anchor", "--reverse")
+}
+
+func assertSliceJournalArgv(t *testing.T, raw string, matches []string, other ...string) {
+	t.Helper()
+	args := strings.Split(strings.TrimSpace(raw), "\n")
+	if slices.Contains(args, "-u") {
+		t.Fatalf("slice journal unexpectedly used -u: %v", args)
+	}
+	for _, want := range append(append([]string(nil), matches...), other...) {
+		if !slices.Contains(args, want) {
+			t.Errorf("slice journal argv omitted %q: %v", want, args)
+		}
+	}
+	for _, match := range matches {
+		if n := strings.Count(raw, match+"\n"); n != 1 {
+			t.Errorf("slice match %q occurred %d times in %q", match, n, raw)
+		}
+	}
 }
 
 // Twenty ~1MiB records, newest first, against the 16MiB page budget: the

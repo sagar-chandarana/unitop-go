@@ -7,16 +7,57 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/rivo/uniseg"
 	"io"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/rivo/uniseg"
 )
+
+// journalSelector is one logical journal source. Units use journalctl's -u
+// selector; slices use one trusted-field match per known slice in the subtree.
+// id is a stable stream identity, while label is the human-facing pane title.
+type journalSelector struct {
+	id    string
+	label string
+	args  []string
+	slice bool
+}
+
+func unitJournalSelector(unit string) journalSelector {
+	if unit == "" {
+		return journalSelector{}
+	}
+	return journalSelector{id: unit, label: unit, args: []string{"-u", unit}}
+}
+
+func sliceJournalSelector(root string, subtree []string) journalSelector {
+	if root == "" {
+		return journalSelector{}
+	}
+	names := append([]string{root}, subtree...)
+	slices.Sort(names)
+	names = slices.Compact(names)
+	args := make([]string, 0, len(names))
+	for _, name := range names {
+		if name != "" {
+			args = append(args, "_SYSTEMD_SLICE="+name)
+		}
+	}
+	return journalSelector{
+		id:    "slice:" + strings.Join(names, "\x00"),
+		label: sliceLabel(root),
+		args:  args,
+		slice: true,
+	}
+}
+
+func (s journalSelector) empty() bool { return s.id == "" || len(s.args) == 0 }
 
 type logLine struct {
 	ts     time.Time
@@ -96,6 +137,10 @@ type olderBatch struct {
 // drop the anchor, and flip the rest back into chronological order. Getting
 // only the anchor back means we are at the start of the journal.
 func fetchOlder(js *journalStream, r runner, unit, cursor string, f logFilter, n, gen int) tea.Cmd {
+	return fetchOlderSelector(js, r, unitJournalSelector(unit), cursor, f, n, gen)
+}
+
+func fetchOlderSelector(js *journalStream, r runner, selector journalSelector, cursor string, f logFilter, n, gen int) tea.Cmd {
 	return func() tea.Msg {
 		if js == nil || !js.beginPage() {
 			// Teardown has begun: launch nothing. The empty batch clears the
@@ -106,10 +151,11 @@ func fetchOlder(js *journalStream, r runner, unit, cursor string, f logFilter, n
 		ctx, cancel := context.WithTimeout(js.ctx, backlogTimeout)
 		defer cancel()
 
-		args := append([]string{
-			"-u", unit, "--cursor", cursor, "--reverse",
-			"-n", strconv.Itoa(n + 1), "--no-pager", "-o", "json", journalFields,
-		}, f.args()...)
+		args := append(append([]string(nil), selector.args...),
+			"--cursor", cursor, "--reverse",
+			"-n", strconv.Itoa(n+1), "--no-pager", "-o", "json", journalFields,
+		)
+		args = append(args, f.args()...)
 		res := runFinite(ctx, r, args, n+1)
 		if res.err != nil {
 			return olderBatch{gen: gen, err: res.errText()}
@@ -176,7 +222,8 @@ type journalBatch struct {
 
 type journalStream struct {
 	gen    int
-	unit   string
+	unit   string // selector identity; a unit name for unit streams
+	target journalSelector
 	filter logFilter // what this stream was started with
 	ch     chan journalBatch
 	// ctx is cancelled when this stream is torn down. Backwards page fetches
@@ -194,6 +241,26 @@ type journalStream struct {
 	mu       sync.Mutex
 	stopping bool
 	pages    sync.WaitGroup
+}
+
+func (j *journalStream) selector() journalSelector {
+	if j == nil {
+		return journalSelector{}
+	}
+	if !j.target.empty() {
+		return j.target
+	}
+	// Several focused tests construct an inert stream directly. Preserve the
+	// historical unit field as a valid selector for those fixtures.
+	return unitJournalSelector(j.unit)
+}
+
+func (j *journalStream) displayLabel() string {
+	s := j.selector()
+	if s.label != "" {
+		return s.label
+	}
+	return j.unit
 }
 
 func (j *journalStream) stop() {
@@ -238,8 +305,8 @@ func (j *journalStream) stopAndWait() {
 // which is what makes paging backwards possible.
 const journalFields = "--output-fields=MESSAGE,PRIORITY,SYSLOG_IDENTIFIER,_PID"
 
-// startJournal reads one unit's journal in two phases: a backlog that ends, and
-// then a tail that begins exactly where it left off.
+// startJournal reads one selector's journal in two phases: a backlog that ends,
+// and then a tail that begins exactly where it left off.
 //
 // It used to be one command — `journalctl -n 500 -f <filter>` — which was wrong
 // for `-g`. With `-f`, journalctl seeks back N *raw* entries and only then
@@ -255,9 +322,13 @@ const journalFields = "--output-fields=MESSAGE,PRIORITY,SYSLOG_IDENTIFIER,_PID"
 // Stderr is folded into the stream as meta lines so permission problems are
 // visible in the pane instead of silently producing an empty log.
 func startJournal(parent context.Context, r runner, unit string, f logFilter, backlog, gen int) *journalStream {
+	return startJournalSelector(parent, r, unitJournalSelector(unit), f, backlog, gen)
+}
+
+func startJournalSelector(parent context.Context, r runner, selector journalSelector, f logFilter, backlog, gen int) *journalStream {
 	ctx, cancel := context.WithCancel(parent)
 	ch := make(chan journalBatch, 64)
-	js := &journalStream{gen: gen, unit: unit, filter: f, ch: ch, ctx: ctx, cancel: cancel,
+	js := &journalStream{gen: gen, unit: selector.id, target: selector, filter: f, ch: ch, ctx: ctx, cancel: cancel,
 		done: make(chan struct{})}
 
 	go func() {
@@ -316,7 +387,7 @@ func startJournal(parent context.Context, r runner, unit string, f logFilter, ba
 			}
 			since = remoteNow
 		}
-		lines, err := readBacklog(phaseCtx, r, unit, f, backlog)
+		lines, err := readBacklogSelector(phaseCtx, r, selector, f, backlog)
 		if err != nil {
 			meta(err.Error())
 			return
@@ -333,7 +404,7 @@ func startJournal(parent context.Context, r runner, unit string, f logFilter, ba
 		}
 
 		// Phase two.
-		followJournal(ctx, r, unit, f, last, since, gen, send)
+		followJournalSelector(ctx, r, selector, f, last, since, gen, send)
 	}()
 	return js
 }
@@ -342,10 +413,15 @@ func startJournal(parent context.Context, r runner, unit string, f logFilter, ba
 // because `-n` with `-g` returns newest-first on its own while `-p` returns
 // oldest-first; saying which we want makes the order independent of the filter.
 func backlogArgs(unit string, f logFilter, n int) []string {
-	return append([]string{
-		"-u", unit, "-n", strconv.Itoa(n), "--reverse",
+	return backlogArgsSelector(unitJournalSelector(unit), f, n)
+}
+
+func backlogArgsSelector(selector journalSelector, f logFilter, n int) []string {
+	args := append(append([]string(nil), selector.args...),
+		"-n", strconv.Itoa(n), "--reverse",
 		"--no-pager", "-o", "json", journalFields,
-	}, f.args()...)
+	)
+	return append(args, f.args()...)
 }
 
 // followArgs tails from `after`, or from `since` when the backlog was empty and
@@ -360,7 +436,11 @@ func backlogArgs(unit string, f logFilter, n int) []string {
 // `--after-cursor` already bound the replay; the `-n 10` that bare `-f` would
 // otherwise default to does not apply once either is given.
 func followArgs(unit string, f logFilter, after string, since time.Time) []string {
-	args := []string{"-u", unit, "-f", "--no-pager", "-o", "json", journalFields}
+	return followArgsSelector(unitJournalSelector(unit), f, after, since)
+}
+
+func followArgsSelector(selector journalSelector, f logFilter, after string, since time.Time) []string {
+	args := append(append([]string(nil), selector.args...), "-f", "--no-pager", "-o", "json", journalFields)
 	if after != "" {
 		args = append(args, "--after-cursor", after)
 	} else {
@@ -657,7 +737,11 @@ func warningLines(ws []string) []logLine {
 // said out loud, and stderr warnings from a SUCCESSFUL read surface as meta
 // lines instead of vanishing with the exit status.
 func readBacklog(ctx context.Context, r runner, unit string, f logFilter, n int) ([]logLine, error) {
-	res := runFinite(ctx, r, backlogArgs(unit, f, n), n)
+	return readBacklogSelector(ctx, r, unitJournalSelector(unit), f, n)
+}
+
+func readBacklogSelector(ctx context.Context, r runner, selector journalSelector, f logFilter, n int) ([]logLine, error) {
+	res := runFinite(ctx, r, backlogArgsSelector(selector, f, n), n)
 	if res.err != nil {
 		return nil, errors.New(res.errText())
 	}
@@ -675,8 +759,13 @@ func readBacklog(ctx context.Context, r runner, unit string, f logFilter, n int)
 // followJournal tails the unit, picking up where the backlog left off.
 func followJournal(ctx context.Context, r runner, unit string, f logFilter,
 	after string, since time.Time, gen int, send func(journalBatch) bool) {
+	followJournalSelector(ctx, r, unitJournalSelector(unit), f, after, since, gen, send)
+}
 
-	args := followArgs(unit, f, after, since)
+func followJournalSelector(ctx context.Context, r runner, selector journalSelector, f logFilter,
+	after string, since time.Time, gen int, send func(journalBatch) bool) {
+
+	args := followArgsSelector(selector, f, after, since)
 	fail := func(msg string) {
 		send(journalBatch{gen: gen, done: true, backlogDone: true, lines: []logLine{
 			{ts: time.Now(), prio: 3, msg: sanitizeText(msg), meta: true}}})

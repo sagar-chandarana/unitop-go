@@ -114,7 +114,7 @@ func TestTopMarkerReportsPagingState(t *testing.T) {
 
 	m.loadingOlder = false
 	m.logAtStart = true
-	if got := stripANSI(m.logTopMarker(120)); !strings.Contains(got, "beginning of this unit's journal") {
+	if got := stripANSI(m.logTopMarker(120)); !strings.Contains(got, "beginning of this journal") {
 		t.Errorf("end marker = %q", got)
 	}
 
@@ -595,7 +595,7 @@ func TestTopMarkerDoesNotEatData(t *testing.T) {
 	m.logAtStart = true
 	win := m.renderLogWindow(120, 5)
 	joined := stripANSI(strings.Join(win, "\n"))
-	if !strings.Contains(joined, "beginning of this unit's journal") {
+	if !strings.Contains(joined, "beginning of this journal") {
 		t.Errorf("no top marker over a complete one-entry journal:\n%s", joined)
 	}
 	if !strings.Contains(joined, "line") {
