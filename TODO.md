@@ -1301,6 +1301,19 @@ reviews + gates + commits per the flipped precedent recorded in the comms log.
 - **Tests:** fake `systemctl show` for a slice returning IO/IP totals → detail
   renders them; accounting-off sentinel → hidden; a guard/test proving the
   slice-accounting query does not fire for every slice each poll.
+- **Review outcome:** Accepted and implemented (commit `7b1e23a`). Codex
+  authored the cgroup-accounting selector (the one selected slice joins the
+  existing detail `systemctl show` batch; unselected slices add no per-tick PID 1
+  work). Review under the flipped role caught one high-severity blocker (F1): the
+  root `-.slice` is an option-looking operand, so the argv's missing `--` made
+  the whole batch fail — fixed by placing `--` before every operand, locked by a
+  test asserting both the successful root poll and `-- live.service -.slice`.
+  F2 test gaps closed: single-batch membership (401-service fixture), the
+  visible-selection gate, the stale cross-slice guard (system.slice rejected
+  under user.slice), and CPU-total sentinel/overflow bounds. F3 (cumulative
+  lines ordered last, clipping first on short panes) accepted as consistent with
+  existing unit-detail ordering. Gates green (gofmt/vet/focused/full/race/nix
+  build, all exit 0); committed and pushed by Claude.
 
 ## Record convention
 
