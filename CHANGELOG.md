@@ -8,6 +8,8 @@ to change.
 
 ## [Unreleased]
 
+## [0.3.4] — 2026-08-22
+
 ### Added
 
 - **The host header and unit detail panes show cumulative transfer totals.**
@@ -623,7 +625,8 @@ First release.
 - Static `linux/amd64` and `linux/arm64` binaries, a flake with an overlay, and
   nothing to configure.
 
-[Unreleased]: https://github.com/sagar-chandarana/unitop-go/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/sagar-chandarana/unitop-go/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/sagar-chandarana/unitop-go/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/sagar-chandarana/unitop-go/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/sagar-chandarana/unitop-go/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/sagar-chandarana/unitop-go/compare/v0.3.0...v0.3.1

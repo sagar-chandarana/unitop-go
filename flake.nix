@@ -8,7 +8,7 @@
       # unitop talks to systemd, so Linux only — but both common arches.
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
-      version = "0.3.3";
+      version = "0.3.4";
     in {
       packages = forAllSystems (pkgs: rec {
         unitop = pkgs.buildGoModule {
