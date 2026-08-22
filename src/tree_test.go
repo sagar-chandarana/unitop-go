@@ -201,3 +201,102 @@ func TestSelectedSliceBuildsASubtreeJournalSelector(t *testing.T) {
 		t.Errorf("empty slice journal was not rendered as an empty stream:\n%s", got)
 	}
 }
+
+func TestOnlyAVisibleSelectedSliceIsPolledForAccounting(t *testing.T) {
+	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, true, "")
+	m.width, m.height, m.ready, m.connected = 140, 30, true, true
+	m.units = treeUnits()
+	m.rebuild()
+
+	found := false
+	for i, r := range m.rows {
+		if r.kind == rowSlice && r.slice == "user.slice" {
+			m.cursor = i
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("user.slice row was not built")
+	}
+	if got := m.pollSliceTarget(); got != "user.slice" {
+		t.Fatalf("selected slice poll target = %q", got)
+	}
+	for i, r := range m.rows {
+		if r.kind == rowUnit {
+			m.cursor = i
+			break
+		}
+	}
+	if got := m.pollSliceTarget(); got != "" {
+		t.Fatalf("unit selection queried slice %q", got)
+	}
+	m.cursor = 0 // root slice
+	m.showLogs = false
+	if got := m.pollSliceTarget(); got != "" {
+		t.Fatalf("hidden detail pane queried slice %q", got)
+	}
+}
+
+func TestSliceDetailUsesItsOwnCgroupAccounting(t *testing.T) {
+	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, true, "")
+	m.width, m.height, m.ready, m.connected = 140, 30, true, true
+	m.units = treeUnits()
+	m.rebuild()
+
+	var selected row
+	found := false
+	for _, r := range m.rows {
+		if r.kind == rowSlice && r.slice == "user.slice" {
+			selected = r
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("user.slice row was not built")
+	}
+	m.sliceName, m.sliceOK = "user.slice", true
+	m.sliceStats = Unit{
+		Name: "user.slice", Tasks: 12, MemCurrent: 8 << 20, MemMax: unsetU64, MemPeak: unsetU64,
+		CPUNSec: 3_000_000_000, CPUPct: 22.5, HasRates: true,
+		IPAccount: true, IPIn: 300, IPOut: 400, NetInRate: 30, NetOutRate: 40,
+		IORead: 500, IOWrite: 600, IORRate: 50, IOWRate: 60,
+	}
+	got := stripANSI(strings.Join(m.sliceDetail(selected, 140), "\n"))
+	for _, want := range []string{
+		"tasks 12", "cpu 22.5%", "mem 8.0M", "net total ↓300B  ↑400B",
+		"io total  ↓500B  ↑600B", "cpu total 3s",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("selected slice detail omitted %q:\n%s", want, got)
+		}
+	}
+
+	// A result captured for another slice must not appear under this row while
+	// the next poll catches up with a selection change.
+	m.sliceName = "system.slice"
+	stale := stripANSI(strings.Join(m.sliceDetail(selected, 140), "\n"))
+	for _, wrong := range []string{"tasks 12", "mem 8.0M", "net total", "io total", "cpu total"} {
+		if strings.Contains(stale, wrong) {
+			t.Errorf("stale slice result leaked %q under user.slice:\n%s", wrong, stale)
+		}
+	}
+
+	m.sliceName = "user.slice"
+	m.sliceStats.IPAccount = false
+	m.sliceStats.IPIn, m.sliceStats.IPOut = unsetU64, unsetU64
+	m.sliceStats.IORead, m.sliceStats.IOWrite = unsetU64, unsetU64
+	got = stripANSI(strings.Join(m.sliceDetail(selected, 140), "\n"))
+	if strings.Contains(got, "net total") || strings.Contains(got, "io total") {
+		t.Errorf("unavailable accounting totals were rendered:\n%s", got)
+	}
+
+	for _, cpu := range []uint64{unsetU64, 1 << 63} {
+		m.sliceStats.CPUNSec = cpu
+		got = stripANSI(strings.Join(m.sliceDetail(selected, 140), "\n"))
+		if strings.Contains(got, "cpu total") {
+			t.Errorf("unrenderable CPU total %d was shown:\n%s", cpu, got)
+		}
+	}
+}

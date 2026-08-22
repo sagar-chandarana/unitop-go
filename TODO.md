@@ -1261,9 +1261,9 @@ reviews + gates + commits per the flipped precedent recorded in the comms log.
   known-units subtree (transient/stopped units excluded — honest in CHANGELOG).
   Gates green (gofmt/vet/full/race/nix build); landed by Claude.
 
-#### [ ] UT-049 — Cumulative slice accounting from the slice's own cgroup
+#### [x] UT-049 — Cumulative slice accounting from the slice's own cgroup
 
-- **Status:** Spec — awaiting Codex implementation
+- **Status:** Done — Codex implemented, Claude reviewed (F1 blocker + F2 gaps), gated, committed
 - **Requested by:** maintainer, 2026-08-22 UTC. Base: HEAD after v0.3.4.
 - **Now:** the slice row aggregate (`tree.go aggregate`) sums *visible* child
   RATES + mem/tasks but initializes the new cumulative byte totals
@@ -1287,6 +1287,14 @@ reviews + gates + commits per the flipped precedent recorded in the comms log.
   cumulative totals (cheap, approximate, for the table) while the detail uses
   the true cgroup number; whether slice live rates come from delta-over-time on
   the slice's own counters or stay the summed child rates.
+- **Implementation decision (Codex / GPT-5, 2026-08-22 UTC):** do not sum
+  cumulative child counters: the result is incomplete whenever inactive units
+  are omitted and the table has no cumulative columns. The selected detail uses
+  the slice's native hierarchical counters and derives its own CPU/net/IO rates
+  across consecutive selected polls. At most that one selected slice is added
+  to the first existing service `systemctl show` batch, so this adds neither a
+  process nor an SSH round trip and adds zero property queries for unselected
+  slices.
 - **Acceptance:** a selected slice with accounting enabled shows cumulative
   io/net/mem/tasks from its own cgroup; cleanly hidden when accounting is off;
   no per-tick systemctl-show cost added for unselected slices.

@@ -227,7 +227,9 @@ machine-wide network receive/transmit and physical-disk read/write totals.
 (`user-1001.slice` under `user.slice`). Each slice row totals everything
 beneath it — CPU, memory, network, I/O, tasks, restarts — and turns red with
 `N fail` when a descendant has failed. Selecting a slice shows one combined
-journal for its complete subtree, including nested sub-slices.
+journal for its complete subtree, including nested sub-slices. Its detail pane
+uses that slice cgroup's own hierarchical memory, task, CPU, network, and disk
+accounting; unavailable counters stay hidden rather than becoming child sums.
 
 ![tree view](docs/tree.png)
 
@@ -325,7 +327,9 @@ A poll is two commands, whatever the host's size: one that lists the units (and,
 remotely, dumps `/proc` and physical block-device counters in the same shell),
 and one batched `systemctl show` for the units visible in the normal view.
 Inactive units join that second query only when `-a` or `a` asks to display
-them. Remotely that is two ssh round trips over a single multiplexed connection.
+them. When a slice's detail pane is visible, that one selected slice joins the
+same batch; unselected slices are never queried. Remotely this remains two ssh
+round trips over a single multiplexed connection.
 Logs are a separate long-lived `journalctl -f -o json`, restarted only when the
 selected unit or slice subtree changes.
 

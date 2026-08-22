@@ -14,6 +14,11 @@ to change.
   tree view reads its own and its known descendant slices through journald's
   trusted `_SYSTEMD_SLICE` matches in one stream. Backwards paging, live follow,
   priority levels, and journal search work the same way as for a service.
+- **Selected slices show their own cgroup accounting.** The detail pane uses
+  systemd's hierarchical slice counters for memory, tasks, CPU, network, and
+  disk totals and rates instead of approximating them from visible services.
+  Only the selected slice joins the existing detail query, so unselected slice
+  rows add no per-second PID 1 work.
 
 ## [0.3.4] — 2026-08-22
 

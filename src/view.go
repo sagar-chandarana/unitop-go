@@ -1066,21 +1066,40 @@ func (m model) viewLogPane(width, height int) []string {
 	return append(out, m.renderLogWindow(width, m.logHeight())...)
 }
 
-// sliceDetail keeps the aggregate's inexpensive live rates in view while its
-// single subtree journal occupies the normal log area. Cumulative accounting
-// comes from the selected slice's own cgroup (UT-049), not misleading sums of
-// whichever child units happen to be visible.
+// sliceDetail uses the selected slice's own hierarchical cgroup accounting as
+// soon as its poll lands. Until then it keeps the inexpensive child aggregate
+// in view, but never presents child sums as cumulative subtree totals.
 func (m model) sliceDetail(r row, width int) []string {
 	head := stHeader.Render(sliceLabel(r.slice))
-	count := fmt.Sprintf("%d units", r.nUnits)
+	count := stFaint.Render(fmt.Sprintf("%d units", r.nUnits))
+	stats := r.unit
+	if m.sliceOK && m.sliceName == r.slice {
+		stats = m.sliceStats
+		if stats.Tasks != unsetU64 {
+			count += stFaint.Render(" · ") + stFaint.Render("tasks "+humanCount(stats.Tasks))
+		}
+	}
 	if r.nFailed > 0 {
 		count += stFaint.Render(" · ") + stBad.Render(fmt.Sprintf("%d failed", r.nFailed))
 	}
-	return []string{
+	lines := []string{
 		truncANSI(head, width),
-		truncANSI(stFaint.Render(count), width),
-		truncANSI(m.unitLive(r.unit), width),
+		truncANSI(count, width),
+		truncANSI(m.unitLive(stats), width),
 	}
+	if m.sliceOK && m.sliceName == r.slice {
+		if total := unitNetTotal(stats); total != "" {
+			lines = append(lines, truncANSI(total, width))
+		}
+		if total := unitIOTotal(stats); total != "" {
+			lines = append(lines, truncANSI(total, width))
+		}
+		if stats.CPUNSec != unsetU64 && stats.CPUNSec <= uint64(1<<63-1) {
+			lines = append(lines, truncANSI(stFaint.Render("cpu total ")+
+				stKey.Render(humanDur(time.Duration(stats.CPUNSec))), width))
+		}
+	}
+	return lines
 }
 
 // unitDetail describes the selected service, most useful first, so a short

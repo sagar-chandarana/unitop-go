@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -161,6 +164,122 @@ func TestShowAllDoesNotPollWhileStopped(t *testing.T) {
 				t.Fatalf("showAll=%v polling=%v queued=%v, want true, false, false", m.showAll, m.polling, m.pollQueued)
 			}
 		})
+	}
+}
+
+func TestPollAddsOnlyTheSelectedSliceToTheDetailBatch(t *testing.T) {
+	bin := t.TempDir()
+	argsFile := filepath.Join(bin, "show-args")
+	script := `#!/bin/sh
+case "$1" in
+list-units)
+	printf 'live.service loaded active running Live service\n'
+	;;
+show)
+	printf '%s\n' "$*" >> "$UNITOP_SHOW_ARGS"
+	unitop_sep=0
+	for unitop_arg in "$@"; do
+		[ "$unitop_arg" = -- ] && unitop_sep=1
+		if [ "$unitop_arg" = -.slice ] && [ "$unitop_sep" = 0 ]; then
+			exit 64
+		fi
+		case "$unitop_arg" in
+		live.service)
+			printf 'Id=live.service\nLoadState=loaded\nActiveState=active\nSubState=running\nMemoryCurrent=1024\nCPUUsageNSec=1000\n\n'
+			;;
+		system.slice)
+			printf 'Id=system.slice\nLoadState=loaded\nActiveState=active\nSubState=active\nTasksCurrent=12\nMemoryCurrent=1048576\nCPUUsageNSec=2000000000\nIPAccounting=yes\nIPIngressBytes=300\nIPEgressBytes=400\nIOReadBytes=500\nIOWriteBytes=600\n\n'
+			;;
+		-.slice)
+			printf 'Id=-.slice\nLoadState=loaded\nActiveState=active\nSubState=active\nTasksCurrent=20\nMemoryCurrent=2097152\nCPUUsageNSec=3000000000\n\n'
+			;;
+		esac
+	done
+	;;
+esac
+`
+	writeExe(t, bin, "systemctl", script)
+	t.Setenv("UNITOP_SHOW_ARGS", argsFile)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	plain := NewCollector(runner{})
+	plain.version = minSystemd
+	if _, _, err := plain.PollVisible(context.Background(), false); err != nil {
+		t.Fatalf("plain poll failed: %v", err)
+	}
+	plainArgs, _ := os.ReadFile(argsFile)
+	if strings.Contains(string(plainArgs), ".slice") {
+		t.Fatalf("unselected poll queried a slice: %q", plainArgs)
+	}
+
+	if err := os.WriteFile(argsFile, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	selected := NewCollector(runner{})
+	selected.version = minSystemd
+	units, _, slice, ok, err := selected.PollVisibleSlice(context.Background(), false, "system.slice")
+	if err != nil {
+		t.Fatalf("selected-slice poll failed: %v", err)
+	}
+	if len(units) != 1 || units[0].Name != "live.service" {
+		t.Fatalf("service rows were contaminated by slice stats: %+v", units)
+	}
+	if !ok || slice.Name != "system.slice" || slice.Tasks != 12 || slice.MemCurrent != 1<<20 ||
+		slice.IPIn != 300 || slice.IPOut != 400 || slice.IORead != 500 || slice.IOWrite != 600 {
+		t.Fatalf("selected slice accounting = ok:%v %+v", ok, slice)
+	}
+	selectedArgs, _ := os.ReadFile(argsFile)
+	line := strings.TrimSpace(string(selectedArgs))
+	if strings.Count(line, "system.slice") != 1 || strings.Count(line, "live.service") != 1 ||
+		strings.Contains(line, "other.slice") || !strings.Contains(line, " -- ") {
+		t.Fatalf("selected detail batch = %q", line)
+	}
+
+	if err := os.WriteFile(argsFile, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := NewCollector(runner{})
+	root.version = minSystemd
+	_, _, rootStats, rootOK, err := root.PollVisibleSlice(context.Background(), false, "-.slice")
+	if err != nil || !rootOK || rootStats.Name != "-.slice" {
+		t.Fatalf("dash-prefixed root slice poll = ok:%v stats:%+v err:%v", rootOK, rootStats, err)
+	}
+	rootArgs, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(rootArgs), " -- live.service -.slice") {
+		t.Fatalf("root slice was not protected by --: %q", rootArgs)
+	}
+}
+
+func TestSelectedSliceJoinsOnlyTheFirstDetailBatch(t *testing.T) {
+	bin := t.TempDir()
+	argsFile := filepath.Join(bin, "show-args")
+	script := `#!/bin/sh
+case "$1" in
+list-units)
+	unitop_i=0
+	while [ "$unitop_i" -lt 401 ]; do
+		printf 'u%03d.service loaded active running Fixture\n' "$unitop_i"
+		unitop_i=$((unitop_i + 1))
+	done
+	;;
+show)
+	printf '%s\n' "$*" >> "$UNITOP_SHOW_ARGS"
+	;;
+esac
+`
+	writeExe(t, bin, "systemctl", script)
+	t.Setenv("UNITOP_SHOW_ARGS", argsFile)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	c := NewCollector(runner{})
+	c.version = minSystemd
+	if _, _, _, _, err := c.PollVisibleSlice(context.Background(), false, "system.slice"); err != nil {
+		t.Fatalf("multi-batch poll failed: %v", err)
+	}
+	raw, _ := os.ReadFile(argsFile)
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) != 2 || strings.Count(string(raw), "system.slice") != 1 ||
+		!strings.Contains(lines[0], "system.slice") || strings.Contains(lines[1], "system.slice") {
+		t.Fatalf("selected slice did not join only batch zero: %q", raw)
 	}
 }
 

@@ -82,9 +82,12 @@ type spinnerTickMsg struct{}
 type journalSettleMsg struct{ gen int }
 
 type unitsMsg struct {
-	units []Unit
-	host  HostStats
-	err   error
+	units     []Unit
+	host      HostStats
+	sliceName string
+	slice     Unit
+	sliceOK   bool
+	err       error
 }
 
 type model struct {
@@ -96,6 +99,9 @@ type model struct {
 
 	units      []Unit
 	host       HostStats
+	sliceStats Unit   // true cgroup accounting for the selected slice only
+	sliceName  string // selector captured by the poll that produced sliceStats
+	sliceOK    bool
 	rows       []row
 	err        string
 	lastPoll   time.Time
@@ -247,6 +253,7 @@ func spinnerTickCmd() tea.Cmd {
 
 func (m model) pollCmd() tea.Cmd {
 	col, work, includeInactive := m.col, m.work, m.showAll
+	selectedSlice := m.pollSliceTarget()
 	return func() tea.Msg {
 		// Registered here, inside the closure, never at construction: a Cmd
 		// bubbletea drops on the floor must not hold shutdown hostage.
@@ -257,9 +264,22 @@ func (m model) pollCmd() tea.Cmd {
 		defer work.done()
 		ctx, cancel := context.WithTimeout(root, 25*time.Second)
 		defer cancel()
-		us, host, err := col.PollVisible(ctx, includeInactive)
-		return unitsMsg{units: us, host: host, err: err}
+		us, host, slice, sliceOK, err := col.PollVisibleSlice(ctx, includeInactive, selectedSlice)
+		return unitsMsg{units: us, host: host, sliceName: selectedSlice, slice: slice, sliceOK: sliceOK, err: err}
 	}
+}
+
+// pollSliceTarget returns at most the one slice whose detail pane is visible.
+// Keeping this decision in the model is the hard performance boundary: the
+// collector cannot accidentally query every rowSlice every second.
+func (m model) pollSliceTarget() string {
+	if !m.logPaneVisible() {
+		return ""
+	}
+	if r, ok := m.selectedRow(); ok && r.kind == rowSlice {
+		return r.slice
+	}
+	return ""
 }
 
 func waitJournal(js *journalStream) tea.Cmd {
@@ -343,6 +363,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fatal = false
 			m.units = msg.units
 			m.host = msg.host
+			m.sliceName, m.sliceStats, m.sliceOK = msg.sliceName, msg.slice, msg.sliceOK
 		}
 		m.rebuild()
 		cmds := []tea.Cmd{m.postPollSync(msg.err == nil)}

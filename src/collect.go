@@ -205,7 +205,8 @@ func NewCollector(r runner) *Collector {
 // systemd knows about only as a dangling reference (LoadState=not-found) are
 // dropped: they are noise, not services.
 func (c *Collector) Poll(ctx context.Context) ([]Unit, HostStats, error) {
-	return c.poll(ctx, true)
+	units, host, _, _, err := c.poll(ctx, true, "")
+	return units, host, err
 }
 
 // PollVisible is the UI poll. Unless inactive units are being displayed, do
@@ -213,60 +214,79 @@ func (c *Collector) Poll(ctx context.Context) ([]Unit, HostStats, error) {
 // --property flag filters its output only, after GetAll has already made
 // systemd compute every property for every named unit.
 func (c *Collector) PollVisible(ctx context.Context, includeInactive bool) ([]Unit, HostStats, error) {
-	return c.poll(ctx, includeInactive)
+	units, host, _, _, err := c.poll(ctx, includeInactive, "")
+	return units, host, err
 }
 
-func (c *Collector) poll(ctx context.Context, includeInactive bool) ([]Unit, HostStats, error) {
+// PollVisibleSlice adds one selected slice to the normal visible-service batch
+// and returns its cgroup accounting separately. Callers must never pass every
+// slice: systemctl asks PID 1 for every property of every named unit even when
+// its output is narrowed with --property.
+func (c *Collector) PollVisibleSlice(ctx context.Context, includeInactive bool, selectedSlice string) ([]Unit, HostStats, Unit, bool, error) {
+	return c.poll(ctx, includeInactive, selectedSlice)
+}
+
+func (c *Collector) poll(ctx context.Context, includeInactive bool, selectedSlice string) ([]Unit, HostStats, Unit, bool, error) {
 	proc, names, unitTotal, err := c.pollBaseFiltered(ctx, includeInactive)
 	host := c.deriveHost(proc, time.Now())
 	host.UnitTotal = unitTotal
 	if err != nil {
-		return nil, host, err
+		return nil, host, Unit{}, false, err
 	}
 	if len(names) == 0 {
-		return nil, host, nil
+		return nil, host, Unit{}, false, nil
 	}
 
 	now := time.Now()
-	var units []Unit
+	var details []Unit
 	// One batch covers any realistic host; the split only guards against a
-	// command line long enough to bother execve.
+	// command line long enough to bother execve. The selected slice joins only
+	// the first batch, so it adds no process or remote round trip.
 	const batch = 400
 	for i := 0; i < len(names); i += batch {
 		end := min(i+batch, len(names))
-		args := append([]string{"show", "--timestamp=unix", "--property=" + showProperties}, names[i:end]...)
+		batchNames := append([]string(nil), names[i:end]...)
+		if i == 0 && selectedSlice != "" {
+			batchNames = append(batchNames, selectedSlice)
+		}
+		args := append([]string{"show", "--timestamp=unix", "--property=" + showProperties, "--"}, batchNames...)
 		out, _, err := boundedRun(c.r.command(ctx, "systemctl", args...))
 		if err != nil {
-			return nil, host, fmt.Errorf("systemctl show: %w", err)
+			return nil, host, Unit{}, false, fmt.Errorf("systemctl show: %w", err)
 		}
-		units = append(units, parseShow(string(out))...)
+		details = append(details, parseShow(string(out))...)
 	}
-	c.normalizeClocks(units)
+	c.normalizeClocks(details)
 
-	seen := make(map[string]sample, len(units))
-	for i := range units {
-		u := &units[i]
+	seen := make(map[string]sample, len(details))
+	units := make([]Unit, 0, len(details))
+	var sliceStats Unit
+	var sliceOK bool
+	for i := range details {
+		u := &details[i]
 		cur := sample{cpu: u.CPUNSec, ipIn: u.IPIn, ipOut: u.IPOut, ioR: u.IORead, ioW: u.IOWrite, when: now}
 		seen[u.Name] = cur
-		p, ok := c.prev[u.Name]
-		if !ok {
+		if p, ok := c.prev[u.Name]; ok {
+			dt := now.Sub(p.when).Seconds()
+			if dt > 0 {
+				u.HasRates = true
+				if u.CPUNSec != unsetU64 && p.cpu != unsetU64 && u.CPUNSec >= p.cpu {
+					u.CPUPct = float64(u.CPUNSec-p.cpu) / 1e9 / dt * 100
+				}
+				u.NetInRate = rate(u.IPIn, p.ipIn, dt)
+				u.NetOutRate = rate(u.IPOut, p.ipOut, dt)
+				u.IORRate = rate(u.IORead, p.ioR, dt)
+				u.IOWRate = rate(u.IOWrite, p.ioW, dt)
+			}
+		}
+		if selectedSlice != "" && u.Name == selectedSlice {
+			sliceStats, sliceOK = *u, true
 			continue
 		}
-		dt := now.Sub(p.when).Seconds()
-		if dt <= 0 {
-			continue
-		}
-		u.HasRates = true
-		if u.CPUNSec != unsetU64 && p.cpu != unsetU64 && u.CPUNSec >= p.cpu {
-			u.CPUPct = float64(u.CPUNSec-p.cpu) / 1e9 / dt * 100
-		}
-		u.NetInRate = rate(u.IPIn, p.ipIn, dt)
-		u.NetOutRate = rate(u.IPOut, p.ipOut, dt)
-		u.IORRate = rate(u.IORead, p.ioR, dt)
-		u.IOWRate = rate(u.IOWrite, p.ioW, dt)
+		units = append(units, *u)
 	}
 	c.prev = seen
-	return units, host, nil
+	return units, host, sliceStats, sliceOK, nil
 }
 
 // rate is a counter delta per second, yielding 0 across a restart (when the
