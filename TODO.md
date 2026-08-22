@@ -1210,6 +1210,74 @@ ack → commit loop.
   artifact + host `sleep` churn, both accounted for above. Committed as one
   commit + pushed.
 
+## Post-0.3.4 review scope (Codex implements, Claude reviews)
+
+Feature specs the maintainer directed after 0.3.4. Codex authors; Claude
+reviews + gates + commits per the flipped precedent recorded in the comms log.
+
+#### [ ] UT-048 — Show a slice's aggregated logs when a slice is selected
+
+- **Status:** Spec — awaiting Codex implementation
+- **Requested by:** maintainer, 2026-08-22 UTC. Base: HEAD after v0.3.4.
+- **Now:** selecting a `rowSlice` shows "a slice has no journal of its own"
+  (`view.go:1047`); `journalTarget()` returns "" for a slice.
+- **Native basis:** journald tags every entry with the trusted field
+  `_SYSTEMD_SLICE`, so `journalctl _SYSTEMD_SLICE=<slice>` streams all units in
+  that slice — one stream, no per-unit fan-out. Immediate slice only; nested
+  sub-slices carry their own value, so the full subtree needs one
+  `_SYSTEMD_SLICE=` match per descendant (journalctl OR-s repeated field
+  matches), and unitop already knows the hierarchy (`sliceParent`/tree).
+- **Shape:** generalize the journal "target" from a bare unit name to a
+  selector that is either `-u <unit>` or one-or-more `_SYSTEMD_SLICE=<slice>`
+  matches. `startJournal`/`readBacklog`/`fetchOlder` (which hardcode
+  `-u unit` at journal.go:110/346/363) build argv from that selector;
+  `journalTarget()` returns it for a slice row; `syncJournal` keys the stream
+  on the selector so unit↔slice switches restart correctly; the log title
+  names the slice (`logUnitName`/`sliceLabel`). grep/priority filters still
+  apply on top.
+- **Decisions for Codex to make (and justify):** immediate slice vs full
+  subtree (recommend subtree, since that matches what "select the slice" means);
+  how the selector threads through the stream identity used for reap/restart.
+- **Acceptance:** a selected slice streams its units' logs; paging and the log
+  filter still work; unit↔slice switches restart the stream (and reap the old
+  child — the UT-045 ownership still holds); a slice with no logged units shows
+  the empty-notice, not a crash.
+- **Tests:** fake-journalctl argv assertion that the slice selector carries the
+  right `_SYSTEMD_SLICE=` match(es); unit↔slice restart; title names the slice.
+
+#### [ ] UT-049 — Cumulative slice accounting from the slice's own cgroup
+
+- **Status:** Spec — awaiting Codex implementation
+- **Requested by:** maintainer, 2026-08-22 UTC. Base: HEAD after v0.3.4.
+- **Now:** the slice row aggregate (`tree.go aggregate`) sums *visible* child
+  RATES + mem/tasks but initializes the new cumulative byte totals
+  (`IPIn/IPOut/IORead/IOWrite`) to 0 and never sums them — so a slice shows no
+  cumulative transfer totals — and summing misses inactive/unfetched children.
+- **Native basis:** a slice is a cgroup and cgroup v2 accounting is
+  hierarchical, so `systemctl show <slice>` returns whole-subtree totals:
+  `MemoryCurrent`, `CPUUsageNSec`, `TasksCurrent`, `IOReadBytes`/`IOWriteBytes`
+  (IOAccounting), `IPIngressBytes`/`IPEgressBytes` (IPAccounting). Gated on that
+  accounting being enabled — IP accounting is off by default; IO/CPU/memory are
+  usually on but distro/version-dependent. Unavailable → the unset sentinel,
+  already hidden by the render (F2).
+- **Shape:** for the SELECTED slice, query its own cgroup accounting via
+  `systemctl show <slice> -p …` and show accurate cumulative io/net (+
+  mem/tasks/cpu) in the detail pane, rather than trusting the child sum.
+- **Perf constraint (hard):** do NOT query every slice's accounting every tick —
+  that reintroduces exactly the PID-1 `systemctl show` cost UT (this release)
+  just removed. Query the slice's accounting only when a slice is selected (its
+  detail is on screen), not for every slice row in the table each poll.
+- **Decisions for Codex:** whether to also fix the row aggregate to sum child
+  cumulative totals (cheap, approximate, for the table) while the detail uses
+  the true cgroup number; whether slice live rates come from delta-over-time on
+  the slice's own counters or stay the summed child rates.
+- **Acceptance:** a selected slice with accounting enabled shows cumulative
+  io/net/mem/tasks from its own cgroup; cleanly hidden when accounting is off;
+  no per-tick systemctl-show cost added for unselected slices.
+- **Tests:** fake `systemctl show` for a slice returning IO/IP totals → detail
+  renders them; accounting-off sentinel → hidden; a guard/test proving the
+  slice-accounting query does not fire for every slice each poll.
+
 ## Record convention
 
 Each item's **Review outcome** is one of:
