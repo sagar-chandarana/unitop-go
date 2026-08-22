@@ -8,6 +8,29 @@ to change.
 
 ## [Unreleased]
 
+### Added
+
+- **The host header and unit detail panes show cumulative transfer totals.**
+  Alongside the live rates, the side/full-view details now show total network
+  download/upload and disk read/write byte counters; the host header shows
+  machine-wide network and physical-disk totals where space permits. Unit
+  network totals appear when IP accounting is enabled.
+
+### Fixed
+
+- **Watching services no longer keeps PID 1 busy for units the table hides.**
+  `systemctl show --property=...` obtains every D-Bus property for every named
+  unit before filtering its output, so polling inactive services once a second
+  consumed a noticeable fraction of a core inside systemd. The normal view now
+  leaves inactive units out of that expensive query (they are fetched when
+  `-a`/`a` asks to show them), without reducing the one-second refresh rate.
+- **The header's unit total remains the total loaded service count.** Narrowing
+  the expensive detail query to visible units no longer makes that denominator
+  exclude inactive services or jump when `a` is pressed.
+- **Unavailable unit I/O totals no longer render as enormous byte counts.** A
+  partially unavailable systemd accounting pair is omitted instead of exposing
+  its internal sentinel value.
+
 ## [0.3.3] — 2026-08-21
 
 ### Changed

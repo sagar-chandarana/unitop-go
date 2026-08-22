@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -20,17 +21,24 @@ var procFiles = []string{
 
 // HostStats is the machine-wide summary drawn above the unit table.
 type HostStats struct {
-	OK        bool
-	NCPU      int
-	Uptime    time.Duration
-	Load      [3]float64
-	CPUPct    float64
-	MemTotal  uint64
-	MemUsed   uint64
-	SwapTotal uint64
-	SwapUsed  uint64
-	NetIn     float64
-	NetOut    float64
+	OK           bool
+	UnitTotal    int
+	NCPU         int
+	Uptime       time.Duration
+	Load         [3]float64
+	CPUPct       float64
+	MemTotal     uint64
+	MemUsed      uint64
+	SwapTotal    uint64
+	SwapUsed     uint64
+	NetIn        float64
+	NetOut       float64
+	NetOK        bool
+	NetInTotal   uint64
+	NetOutTotal  uint64
+	IOOK         bool
+	IOReadTotal  uint64
+	IOWriteTotal uint64
 }
 
 func (h HostStats) MemPct() float64 {
@@ -149,7 +157,10 @@ func (c *Collector) deriveHost(files map[string]string, now time.Time) HostStats
 		tx, _ := strconv.ParseUint(f[8], 10, 64)
 		cur.netRx += rx
 		cur.netTx += tx
+		h.NetOK = true
 	}
+	h.NetInTotal, h.NetOutTotal = cur.netRx, cur.netTx
+	h.IOReadTotal, h.IOWriteTotal, h.IOOK = parseBlockStats(files)
 
 	if p := c.prevHost; p != nil {
 		dt := now.Sub(p.when).Seconds()
@@ -177,7 +188,7 @@ func (c *Collector) deriveHost(files map[string]string, now time.Time) HostStats
 }
 
 func readProcLocal() map[string]string {
-	out := make(map[string]string, len(procFiles))
+	out := make(map[string]string, len(procFiles)+4)
 	for _, f := range procFiles {
 		b, err := os.ReadFile(f)
 		if err != nil {
@@ -185,7 +196,55 @@ func readProcLocal() map[string]string {
 		}
 		out[f] = string(b)
 	}
+	// /sys/block contains whole devices rather than their partitions. Keep
+	// physical leaf devices only: loop/dm/md layers otherwise count the same IO
+	// again above or below the real device.
+	stats, _ := filepath.Glob("/sys/block/*/stat")
+	for _, f := range stats {
+		dir := filepath.Dir(f)
+		if _, err := os.Stat(filepath.Join(dir, "device")); err != nil {
+			continue
+		}
+		if slaves, err := os.ReadDir(filepath.Join(dir, "slaves")); err == nil && len(slaves) > 0 {
+			continue
+		}
+		if b, err := os.ReadFile(f); err == nil {
+			out[f] = string(b)
+		}
+	}
 	return out
+}
+
+// parseBlockStats sums the sector counters in physical /sys/block/*/stat
+// entries. Linux reports these counters in 512-byte sectors regardless of the
+// device's logical block size.
+func parseBlockStats(files map[string]string) (read, written uint64, ok bool) {
+	const sectorBytes = uint64(512)
+	max := ^uint64(0)
+	for name, raw := range files {
+		rest, found := strings.CutPrefix(name, "/sys/block/")
+		if !found || !strings.HasSuffix(rest, "/stat") || strings.Count(rest, "/") != 1 {
+			continue
+		}
+		f := strings.Fields(raw)
+		if len(f) < 7 {
+			continue
+		}
+		r, er := strconv.ParseUint(f[2], 10, 64)
+		w, ew := strconv.ParseUint(f[6], 10, 64)
+		if er != nil || ew != nil || r > max/sectorBytes || w > max/sectorBytes {
+			continue
+		}
+		r *= sectorBytes
+		w *= sectorBytes
+		if read > max-r || written > max-w {
+			continue
+		}
+		read += r
+		written += w
+		ok = true
+	}
+	return read, written, ok
 }
 
 // parseProcDump splits the output of "grep -H ” /proc/a /proc/b …", which

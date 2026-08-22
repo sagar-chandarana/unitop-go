@@ -90,6 +90,29 @@ func TestHostCPUOnAHostWithoutGuests(t *testing.T) {
 	}
 }
 
+func TestHostTransferTotalsComeFromProcAndPhysicalBlockStats(t *testing.T) {
+	files := map[string]string{
+		"/proc/stat":    procStat(1, 0, 0, 1, 0, 0, 0, 0, 0, 0),
+		"/proc/meminfo": "MemTotal: 1024 kB\nMemAvailable: 512 kB\n",
+		"/proc/loadavg": "0.00 0.00 0.00 1/1 1",
+		"/proc/uptime":  "100.0 100.0",
+		"/proc/net/dev": "eth0: 1024 0 0 0 0 0 0 0 2048 0 0 0 0 0 0 0\n" +
+			"lo: 9999 0 0 0 0 0 0 0 9999 0 0 0 0 0 0 0\n",
+		// sysfs stat fields 3 and 7 are sectors read and written.
+		"/sys/block/sda/stat":     "1 2 3 4 5 6 7 8 9 10 11\n",
+		"/sys/block/nvme0n1/stat": "1 2 10 4 5 6 20 8 9 10 11\n",
+		// A nested partition-looking path is not a whole /sys/block device.
+		"/sys/block/sda/sda1/stat": "1 2 1000 4 5 6 1000 8 9 10 11\n",
+	}
+	h := NewCollector(runner{}).deriveHost(files, time.Now())
+	if !h.NetOK || h.NetInTotal != 1024 || h.NetOutTotal != 2048 {
+		t.Errorf("network totals: ok=%v in=%d out=%d", h.NetOK, h.NetInTotal, h.NetOutTotal)
+	}
+	if !h.IOOK || h.IOReadTotal != 13*512 || h.IOWriteTotal != 27*512 {
+		t.Errorf("IO totals: ok=%v read=%d write=%d", h.IOOK, h.IOReadTotal, h.IOWriteTotal)
+	}
+}
+
 // idle includes iowait, which the kernel documents as able to go backwards.
 // Subtracted as uint64 that wrapped, and one glitched sample reported an
 // enormous negative CPU percentage. Such a sample is rejected — exactly

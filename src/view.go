@@ -72,9 +72,9 @@ func (m model) listRows() int {
 func (m model) detailLines() int {
 	if m.fullView {
 		// Cap the detail block so the rule and at least one log row still fit.
-		// A fixed seven overflowed paneInner at heights 10–13, and framed then
+		// A fixed height overflowed paneInner at heights 10–13, and framed then
 		// clipped every log line, leaving a pane titled "log" with none.
-		return max(1, min(7, m.paneInner()-2))
+		return max(1, min(9, m.paneInner()-2))
 	}
 	switch {
 	case m.contentHeight() >= 24:
@@ -568,6 +568,12 @@ func (m model) viewHost() []string {
 			heat(h.LoadPct(), 20, 70, 100, 150).
 				Render(fmt.Sprintf("%.2f %.2f %.2f", h.Load[0], h.Load[1], h.Load[2])))
 	}
+	unitTotal := max(h.UnitTotal, len(m.units))
+	units := fmt.Sprintf("%s%s%s units",
+		stGood.Render(fmt.Sprint(active)), stFaint.Render("/"), stFaint.Render(fmt.Sprint(unitTotal)))
+	if failed > 0 {
+		units += sep + stBad.Render(fmt.Sprintf("%d failed", failed))
+	}
 
 	usage := []string{
 		stFaint.Render("cpu ") + heat(h.CPUPct, 5, 40, 70, 90).
@@ -581,11 +587,24 @@ func (m model) viewHost() []string {
 	}
 	usage = append(usage, stFaint.Render("net ")+
 		stAccent.Render("↓"+humanRateFull(h.NetIn)+" ↑"+humanRateFull(h.NetOut)))
-
-	units := fmt.Sprintf("%s%s%s units",
-		stGood.Render(fmt.Sprint(active)), stFaint.Render("/"), stFaint.Render(fmt.Sprint(len(m.units))))
-	if failed > 0 {
-		units += sep + stBad.Render(fmt.Sprintf("%d failed", failed))
+	// Totals are useful but must never displace the unit/failure summary. Add
+	// each only when the normal three-row header has room for both sides.
+	if m.headerLines() > 2 {
+		var totals []string
+		if h.NetOK {
+			totals = append(totals, stFaint.Render("net total ")+
+				stAccent.Render("↓"+humanBytes(h.NetInTotal)+" ↑"+humanBytes(h.NetOutTotal)))
+		}
+		if h.IOOK {
+			totals = append(totals, stFaint.Render("io total ")+
+				stKey.Render("↓"+humanBytes(h.IOReadTotal)+" ↑"+humanBytes(h.IOWriteTotal)))
+		}
+		for _, total := range totals {
+			candidate := strings.Join(append(append([]string(nil), usage...), total), sep)
+			if lipgloss.Width(candidate)+1+lipgloss.Width(units) <= m.width {
+				usage = append(usage, total)
+			}
+		}
 	}
 
 	arrow := "↓"
@@ -1061,6 +1080,12 @@ func (m model) unitDetail(u Unit, width int) []string {
 		lines = append(lines, truncANSI(stats, width))
 	}
 	lines = append(lines, truncANSI(m.unitLive(u), width))
+	if total := unitNetTotal(u); total != "" {
+		lines = append(lines, truncANSI(total, width))
+	}
+	if total := unitIOTotal(u); total != "" {
+		lines = append(lines, truncANSI(total, width))
+	}
 
 	// How it is configured: enough to answer "will this come back on its own,
 	// and does it start at boot".
@@ -1172,6 +1197,27 @@ func (m model) unitLive(u Unit) string {
 			"↓"+humanRateFull(u.IORRate)+" ↑"+humanRateFull(u.IOWRate), stKey))
 	}
 	return strings.Join(parts, stFaint.Render(" · "))
+}
+
+// unitNetTotal is the cumulative counterpart to the live NET rates. It gets
+// its own high-priority detail line so a narrow side pane does not truncate it
+// behind CPU and memory. systemd leaves the counters unset unless IP accounting
+// is enabled for the unit.
+func unitNetTotal(u Unit) string {
+	if !u.IPAccount {
+		return ""
+	}
+	return stFaint.Render("net total ") +
+		stAccent.Render("↓"+humanBytes(u.IPIn)+"  ↑"+humanBytes(u.IPOut))
+}
+
+// unitIOTotal is the cumulative disk counterpart to the live IO rates.
+func unitIOTotal(u Unit) string {
+	if u.IORead == unsetU64 || u.IOWrite == unsetU64 {
+		return ""
+	}
+	return stFaint.Render("io total  ") +
+		stKey.Render("↓"+humanBytes(u.IORead)+"  ↑"+humanBytes(u.IOWrite))
 }
 
 func (m model) unitStats(u Unit) []string {
@@ -1769,6 +1815,7 @@ func (m model) helpLines() []string {
 	for _, n := range []string{
 		"A key belonging to the other pane does nothing; the footer lists only what applies.",
 		"CPU%, NET and IO are rates between polls; MEM is the current cgroup total.",
+		"The host header and detail pane also show cumulative NET and IO totals where they fit.",
 		"NET needs IPAccounting=yes on the unit (or DefaultIPAccounting=yes system-wide).",
 		"Reading logs needs membership of systemd-journal, or root.",
 		"Unit actions need privilege: run as root, or pass -sudo for sudo -n.",

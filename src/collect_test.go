@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -101,6 +102,65 @@ func TestParseShow(t *testing.T) {
 	}
 	if code, ok := b.ExitCode(); !ok || code != 1 {
 		t.Errorf("ExitCode() = %d/%v, want 1/true", code, ok)
+	}
+}
+
+func TestParseUnitListCanSkipHiddenInactiveUnits(t *testing.T) {
+	list := `live.service loaded active running Live service
+done.service loaded active exited Finished oneshot
+failed.service loaded failed failed Failed service
+dead.service loaded inactive dead Inactive service
+dangling.service not-found inactive dead Missing service
+`
+
+	all := parseUnitList(list)
+	if got, want := strings.Join(all, ","), "live.service,done.service,failed.service,dead.service"; got != want {
+		t.Fatalf("all units = %q, want %q", got, want)
+	}
+	visible := parseUnitListFiltered(list, false)
+	if got, want := strings.Join(visible, ","), "live.service,done.service,failed.service"; got != want {
+		t.Fatalf("visible units = %q, want %q", got, want)
+	}
+	visible, total := parseUnitListScope(list, false)
+	if got, want := strings.Join(visible, ","), "live.service,done.service,failed.service"; got != want || total != 4 {
+		t.Fatalf("visible scope = %q with total %d, want %q with total 4", got, total, want)
+	}
+}
+
+func TestShowAllQueuesAFullPollWhenOneIsAlreadyRunning(t *testing.T) {
+	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
+	m.connected = true
+	m.polling = true
+
+	m.handleKey(keyOf("a"))
+	if !m.showAll || !m.pollQueued {
+		t.Fatalf("showAll=%v pollQueued=%v, want both true", m.showAll, m.pollQueued)
+	}
+}
+
+func TestShowAllImmediatelyPollsWhenIdle(t *testing.T) {
+	m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
+	m.connected = true
+
+	_, cmd := m.handleKey(keyOf("a"))
+	if !m.showAll || !m.polling || cmd == nil {
+		t.Fatalf("showAll=%v polling=%v cmd nil=%v, want true, true, false", m.showAll, m.polling, cmd == nil)
+	}
+}
+
+func TestShowAllDoesNotPollWhileStopped(t *testing.T) {
+	for _, state := range []string{"paused", "fatal"} {
+		t.Run(state, func(t *testing.T) {
+			m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
+			m.connected = true
+			m.paused = state == "paused"
+			m.fatal = state == "fatal"
+
+			m.handleKey(keyOf("a"))
+			if !m.showAll || m.polling || m.pollQueued {
+				t.Fatalf("showAll=%v polling=%v queued=%v, want true, false, false", m.showAll, m.polling, m.pollQueued)
+			}
+		})
 	}
 }
 

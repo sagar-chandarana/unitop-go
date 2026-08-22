@@ -208,13 +208,16 @@ toggles it, and a **right click on a unit** opens the action menu.
 
 `enter` on a unit drops the table and gives that unit's log the whole width.
 Above it sits everything worth knowing about the service: pid, uptime, tasks
-and restarts; live CPU, memory, network and I/O; how it is configured (`type`,
-whether it is `enabled`, its restart policy, the user and slice it runs in,
-what socket or timer triggers it); whatever it reports of itself through
+and restarts; live CPU, memory, network and I/O; cumulative network download and
+upload totals and cumulative disk reads and writes; how it is configured
+(`type`, whether it is `enabled`, its restart policy, the user and slice it runs
+in, what socket or timer triggers it); whatever it reports of itself through
 `sd_notify`; the command it actually runs; and the unit file it came from.
 `esc`, or `enter` again, goes back.
 
 The side pane shows as much of the same as fits beside the table.
+Where the terminal is wide enough, the host header also shows cumulative
+machine-wide network receive/transmit and physical-disk read/write totals.
 
 ![full view](docs/full.png)
 
@@ -316,18 +319,19 @@ which calls four different situations `dead`:
 ## How it polls
 
 A poll is two commands, whatever the host's size: one that lists the units (and,
-remotely, dumps `/proc` in the same shell), and one batched
-`systemctl show` that fetches every property for every unit at once. Remotely
-that is two ssh round trips over a single multiplexed connection. Logs are a
-separate long-lived `journalctl -f -o json`, restarted only when the selection
-changes.
+remotely, dumps `/proc` and physical block-device counters in the same shell),
+and one batched `systemctl show` for the units visible in the normal view.
+Inactive units join that second query only when `-a` or `a` asks to display
+them. Remotely that is two ssh round trips over a single multiplexed connection.
+Logs are a separate long-lived `journalctl -f -o json`, restarted only when the
+selection changes.
 
-The cost is dominated by systemd itself, not by the process spawn: on a
-129-unit host, `systemctl show` takes ~216 ms for identity and state alone, and
-~230 ms for all thirty-odd properties unitop asks for. **A whole poll is
-~265 ms there**, so the bottom of the `-i` range is already saturated on a busy
-machine — a tick is skipped while a poll is still in flight, so unitop simply
-refreshes as fast as it can rather than piling requests up.
+The cost is dominated by systemd itself, not by the process spawn. `systemctl`
+implements `show --property=...` by asking PID 1 for every property of each
+named unit and filtering the reply afterwards, so asking for fewer fields barely
+helps; naming fewer units does. The bottom of the `-i` range can still saturate
+a large host — a tick is skipped while a poll is in flight, so unitop refreshes
+as fast as it can rather than piling requests up.
 
 systemd's D-Bus API was measured as an alternative and came out ~1.7× faster,
 which does not pay for the second code path it would need: it is a local unix

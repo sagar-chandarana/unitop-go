@@ -205,8 +205,21 @@ func NewCollector(r runner) *Collector {
 // systemd knows about only as a dangling reference (LoadState=not-found) are
 // dropped: they are noise, not services.
 func (c *Collector) Poll(ctx context.Context) ([]Unit, HostStats, error) {
-	proc, names, err := c.pollBase(ctx)
+	return c.poll(ctx, true)
+}
+
+// PollVisible is the UI poll. Unless inactive units are being displayed, do
+// not ask PID 1 to serialise their complete D-Bus property sets: systemctl's
+// --property flag filters its output only, after GetAll has already made
+// systemd compute every property for every named unit.
+func (c *Collector) PollVisible(ctx context.Context, includeInactive bool) ([]Unit, HostStats, error) {
+	return c.poll(ctx, includeInactive)
+}
+
+func (c *Collector) poll(ctx context.Context, includeInactive bool) ([]Unit, HostStats, error) {
+	proc, names, unitTotal, err := c.pollBaseFiltered(ctx, includeInactive)
 	host := c.deriveHost(proc, time.Now())
+	host.UnitTotal = unitTotal
 	if err != nil {
 		return nil, host, err
 	}
@@ -338,14 +351,27 @@ const (
 	clockMarker = "@@unitop-ver@@" // ends the clock section; the version follows
 	verMarker   = "@@unitop-proc@@"
 	procMarker  = "@@unitop-units@@"
+	// Emit physical leaf block-device stats into the same filename-prefixed
+	// dump as /proc. A device symlink distinguishes hardware/virtual disks from
+	// loop and stacked devices; slaves exclude a remaining stacked layer.
+	remoteBlockStats = `for unitop_f in /sys/block/*/stat; do unitop_d=${unitop_f%/stat}; [ -e "$unitop_d/device" ] || continue; unitop_slave=; for unitop_s in "$unitop_d"/slaves/*; do [ -e "$unitop_s" ] && unitop_slave=1; done; [ -n "$unitop_slave" ] || grep -H '' "$unitop_f"; done`
 )
 
-// pollBase fetches the systemd version, the /proc files and the unit list.
+func procDumpScript() string {
+	return "grep -H '' " + strings.Join(procFiles, " ") + " 2>/dev/null; " + remoteBlockStats
+}
+
+// pollBase fetches the systemd version, host counters and the unit list.
 // Locally that is a few file reads plus an exec; remotely it is a single ssh
 // round trip, which matters because the poll interval is short and a distant
 // host is not. The version check happens here so an unusable systemd is
 // reported before anything else is attempted.
 func (c *Collector) pollBase(ctx context.Context) (map[string]string, []string, error) {
+	proc, names, _, err := c.pollBaseFiltered(ctx, true)
+	return proc, names, err
+}
+
+func (c *Collector) pollBaseFiltered(ctx context.Context, includeInactive bool) (map[string]string, []string, int, error) {
 	if c.r.host == "" {
 		if c.version == 0 {
 			out, _, err := boundedRun(c.r.command(ctx, "systemctl", "--version"))
@@ -354,7 +380,7 @@ func (c *Collector) pollBase(ctx context.Context) (map[string]string, []string, 
 				// host's systemd — it is an ordinary, retryable failure.
 				// Discarding it here turned "systemctl missing from PATH"
 				// into a fatal "no systemd" that stopped polling for good.
-				return nil, nil, fmt.Errorf("systemctl --version: %w", err)
+				return nil, nil, 0, fmt.Errorf("systemctl --version: %w", err)
 			}
 			// Validate before caching: only a version that passes is kept.
 			// Caching a rejected one made the explicit-retry gestures
@@ -362,16 +388,17 @@ func (c *Collector) pollBase(ctx context.Context) (map[string]string, []string, 
 			// after the host's systemd had been upgraded underneath us.
 			v := parseSystemdVersion(firstLineOf(string(out)))
 			if err := checkVersion(v, c.r.target()); err != nil {
-				return nil, nil, err
+				return nil, nil, 0, err
 			}
 			c.version = v
 		}
 		proc := readProcLocal()
 		out, _, err := boundedRun(c.r.command(ctx, "systemctl", listUnitsArgs...))
 		if err != nil {
-			return proc, nil, fmt.Errorf("systemctl list-units: %w", err)
+			return proc, nil, 0, fmt.Errorf("systemctl list-units: %w", err)
 		}
-		return proc, parseUnitList(string(out)), nil
+		names, total := parseUnitListScope(string(out), includeInactive)
+		return proc, names, total, nil
 	}
 
 	// `|| exit` keeps each probe's own failure: piped through the old
@@ -383,7 +410,7 @@ func (c *Collector) pollBase(ctx context.Context) (map[string]string, []string, 
 	// two machines' clocks owe each other nothing.
 	script := "date +%s || exit; echo '" + clockMarker + "'; " +
 		"systemctl --version || exit; echo '" + verMarker + "'; " +
-		"grep -H '' " + strings.Join(procFiles, " ") + " 2>/dev/null; " +
+		procDumpScript() + "; " +
 		"echo '" + procMarker + "'; systemctl " + strings.Join(listUnitsArgs, " ")
 	// The offset boundary is the LAUNCH instant, wall-only: `date` runs
 	// first on the far side, so client-now-minus-remote-epoch measured
@@ -394,22 +421,23 @@ func (c *Collector) pollBase(ctx context.Context) (map[string]string, []string, 
 	launched := time.Now().Round(0)
 	out, _, err := boundedRun(c.r.command(ctx, "sh", "-c", script))
 	if err != nil {
-		return nil, nil, fmt.Errorf("remote poll: %w", err)
+		return nil, nil, 0, fmt.Errorf("remote poll: %w", err)
 	}
 	clock, ver, proc, units, perr := parseRemotePoll(string(out))
 	if perr != nil {
-		return nil, nil, fmt.Errorf("remote poll: %w", perr)
+		return nil, nil, 0, fmt.Errorf("remote poll: %w", perr)
 	}
 	remoteNow, perr := parseEpochLine(clock)
 	if perr != nil {
-		return nil, nil, fmt.Errorf("remote poll: %w", perr)
+		return nil, nil, 0, fmt.Errorf("remote poll: %w", perr)
 	}
 	c.clockOff = launched.Sub(remoteNow) // positive when the client is ahead
 	c.version = parseSystemdVersion(firstLineOf(ver))
 	if err := checkVersion(c.version, c.r.target()); err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
-	return parseProcDump(proc), parseUnitList(units), nil
+	names, total := parseUnitListScope(units, includeInactive)
+	return parseProcDump(proc), names, total, nil
 }
 
 // parseRemotePoll splits the remote round trip by its three marker LINES,
@@ -458,7 +486,21 @@ func firstLineOf(s string) string {
 }
 
 func parseUnitList(out string) []string {
+	return parseUnitListFiltered(out, true)
+}
+
+func parseUnitListFiltered(out string, includeInactive bool) []string {
+	names, _ := parseUnitListScope(out, includeInactive)
+	return names
+}
+
+// parseUnitListScope keeps the complete loaded-service count even when the
+// returned names are narrowed to the units whose detailed properties the UI
+// currently needs. The header denominator must not change when `a` changes
+// that expensive detail-query scope.
+func parseUnitListScope(out string, includeInactive bool) ([]string, int) {
 	var names []string
+	var total int
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
 		if len(f) < 2 || !strings.HasSuffix(f[0], ".service") {
@@ -467,9 +509,16 @@ func parseUnitList(out string) []string {
 		if f[1] == "not-found" {
 			continue
 		}
+		total++
+		// The default UI hides inactive units, and asking `systemctl show` for
+		// them is not free: systemctl issues Properties.GetAll once per unit.
+		// A malformed short row cannot establish that a unit is visible.
+		if !includeInactive && (len(f) < 3 || f[2] == "inactive") {
+			continue
+		}
 		names = append(names, f[0])
 	}
-	return names
+	return names, total
 }
 
 func parseShow(out string) []Unit {

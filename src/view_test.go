@@ -375,6 +375,39 @@ func TestViewRendersRows(t *testing.T) {
 	}
 }
 
+func TestHostHeaderKeepsFullUnitTotalWithVisibleScope(t *testing.T) {
+	m := newModel(runner{}, "testhost", time.Second, sortCPU, false, false, false, "")
+	m.width, m.height, m.ready = 140, 24, true
+	m.connected = true
+	m.units = testUnits() // the normal query omits one inactive unit
+	m.host = HostStats{OK: true, UnitTotal: 4}
+	m.rebuild()
+
+	header := stripANSI(strings.Join(m.viewHost(), "\n"))
+	if !strings.Contains(header, "2/4 units") {
+		t.Fatalf("header lost the full unit denominator:\n%s", header)
+	}
+}
+
+func TestRoomyHostHeaderShowsTransferTotals(t *testing.T) {
+	m := newModel(runner{}, "testhost", time.Second, sortCPU, false, false, false, "")
+	m.width, m.height, m.ready = 240, 30, true
+	m.connected = true
+	m.units = testUnits()
+	m.host = HostStats{
+		OK: true, NCPU: 8, MemTotal: 16 << 30, MemUsed: 4 << 30,
+		NetOK: true, NetInTotal: 3 << 30, NetOutTotal: 750 << 20,
+		IOOK: true, IOReadTotal: 12 << 30, IOWriteTotal: 2 << 30,
+	}
+	m.rebuild()
+	header := stripANSI(strings.Join(m.viewHost(), "\n"))
+	for _, want := range []string{"net total ↓3.0G ↑750M", "io total ↓12G ↑2.0G"} {
+		if !strings.Contains(header, want) {
+			t.Errorf("roomy host header omitted %q:\n%s", want, header)
+		}
+	}
+}
+
 // Enter opens the full view on a unit and gives the log the whole width; Esc
 // brings the table back.
 func TestEnterTogglesFullView(t *testing.T) {
@@ -734,6 +767,8 @@ func detailUnit() Unit {
 		Fragment: "/etc/systemd/system/caddy.service",
 		MainPID:  1314, NRestarts: 2, Tasks: 22, MemCurrent: 76 << 20, MemMax: 512 << 20,
 		CPUPct: 18.9, HasRates: true, ActiveSince: time.Now().Add(-2 * time.Hour),
+		IPAccount: true, IPIn: 3 << 30, IPOut: 750 << 20,
+		IORead: 12 << 30, IOWrite: 2 << 30,
 	}
 }
 
@@ -749,6 +784,8 @@ func TestUnitDetailShowsConfiguration(t *testing.T) {
 		"caddy", "running", "Caddy web server", // identity
 		"pid 1314", "restarts 2", "tasks 22", // lifecycle
 		"18.9%", "76M", // live
+		"net total", "↓3.0G", "↑750M", // cumulative network transfer
+		"io total", "↓12G", "↑2.0G", // cumulative disk transfer
 		"type notify", "enabled", "restart on-failure", "user caddy", // configuration
 		"triggered by caddy.socket",
 		"serving 4 sites",                   // what it says about itself
@@ -767,6 +804,54 @@ func TestUnitDetailShowsConfiguration(t *testing.T) {
 	for _, noise := range []string{"restart no", "slice system", "user "} {
 		if strings.Contains(quiet, noise) {
 			t.Errorf("detail should not spell out the default %q:\n%s", noise, quiet)
+		}
+	}
+}
+
+func TestNetworkTotalsNeedIPAccounting(t *testing.T) {
+	u := detailUnit()
+	if got := stripANSI(unitNetTotal(u)); got != "net total ↓3.0G  ↑750M" {
+		t.Fatalf("network total = %q", got)
+	}
+	u.IPAccount = false
+	if got := unitNetTotal(u); got != "" {
+		t.Fatalf("disabled IP accounting produced %q", stripANSI(got))
+	}
+}
+
+func TestIOTotalsNeedAnAccountingCounter(t *testing.T) {
+	u := detailUnit()
+	if got := stripANSI(unitIOTotal(u)); got != "io total  ↓12G  ↑2.0G" {
+		t.Fatalf("IO total = %q", got)
+	}
+	u.IORead, u.IOWrite = unsetU64, unsetU64
+	if got := unitIOTotal(u); got != "" {
+		t.Fatalf("unset IO accounting produced %q", stripANSI(got))
+	}
+	for _, u := range []Unit{
+		{IORead: unsetU64, IOWrite: 1},
+		{IORead: 1, IOWrite: unsetU64},
+	} {
+		if got := unitIOTotal(u); got != "" {
+			t.Fatalf("partial IO accounting produced %q", stripANSI(got))
+		}
+	}
+}
+
+func TestNetworkTotalsAreVisibleInSideAndFullPanes(t *testing.T) {
+	for _, full := range []bool{false, true} {
+		m := newModel(runner{}, "h", time.Second, sortCPU, false, false, false, "")
+		m.width, m.height, m.ready = 140, 40, true
+		m.connected = true
+		m.fullView = full
+		m.units = []Unit{detailUnit()}
+		m.rebuild()
+
+		got := stripANSI(strings.Join(m.viewLogPane(m.logPaneWidth(), m.contentHeight()), "\n"))
+		for _, want := range []string{"net total ↓3.0G  ↑750M", "io total  ↓12G  ↑2.0G"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("full=%v: visible detail omitted %q:\n%s", full, want, got)
+			}
 		}
 	}
 }

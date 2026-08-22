@@ -94,14 +94,15 @@ type model struct {
 	readOnly  bool
 	sudo      bool
 
-	units    []Unit
-	host     HostStats
-	rows     []row
-	err      string
-	lastPoll time.Time
-	polling  bool
-	paused   bool
-	interval time.Duration
+	units      []Unit
+	host       HostStats
+	rows       []row
+	err        string
+	lastPoll   time.Time
+	polling    bool
+	pollQueued bool // the requested unit scope changed while a poll was in flight
+	paused     bool
+	interval   time.Duration
 
 	// connected goes true on the first poll that comes back without an error.
 	// Until then the normal UI would be an empty table with the failure buried
@@ -244,7 +245,7 @@ func spinnerTickCmd() tea.Cmd {
 }
 
 func (m model) pollCmd() tea.Cmd {
-	col, work := m.col, m.work
+	col, work, includeInactive := m.col, m.work, m.showAll
 	return func() tea.Msg {
 		// Registered here, inside the closure, never at construction: a Cmd
 		// bubbletea drops on the floor must not hold shutdown hostage.
@@ -255,7 +256,7 @@ func (m model) pollCmd() tea.Cmd {
 		defer work.done()
 		ctx, cancel := context.WithTimeout(root, 25*time.Second)
 		defer cancel()
-		us, host, err := col.Poll(ctx)
+		us, host, err := col.PollVisible(ctx, includeInactive)
 		return unitsMsg{units: us, host: host, err: err}
 	}
 }
@@ -343,7 +344,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.host = msg.host
 		}
 		m.rebuild()
-		return m, m.postPollSync(msg.err == nil)
+		cmds := []tea.Cmd{m.postPollSync(msg.err == nil)}
+		if m.pollQueued {
+			m.pollQueued = false
+			m.polling = true
+			cmds = append(cmds, m.pollCmd())
+		}
+		return m, tea.Batch(cmds...)
 
 	case actionResult:
 		return m, m.applyActionResult(msg)
@@ -661,7 +668,22 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "a":
 		m.showAll = !m.showAll
 		m.rebuild()
-		return m, m.syncJournal()
+		cmds := []tea.Cmd{m.syncJournal()}
+		// The collector skips inactive units while they are hidden. Fetch the
+		// newly requested set now instead of making `a` look broken until the
+		// next scheduled refresh. Paused and fatal states retain their normal
+		// no-poll guarantee; unpausing resumes on the next one-second tick, and
+		// R remains the explicit way to step/retry either state.
+		if m.paused || m.fatal {
+			return m, tea.Batch(cmds...)
+		}
+		if !m.polling {
+			m.polling = true
+			cmds = append(cmds, m.pollCmd())
+		} else {
+			m.pollQueued = true
+		}
+		return m, tea.Batch(cmds...)
 	case "f":
 		m.logFollow = !m.logFollow
 		if m.logFollow {

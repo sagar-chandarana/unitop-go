@@ -25,7 +25,7 @@ func TestRemoteScriptRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Skip("no shell available")
 	}
-	script := "grep -H '' " + strings.Join(procFiles, " ") + " 2>/dev/null; " +
+	script := procDumpScript() + "; " +
 		"echo '" + procMarker + "'; echo 'fake.service loaded active running Fake'"
 
 	out, err := exec.Command(sh, "-c", script).Output()
